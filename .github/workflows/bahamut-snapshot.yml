@@ -1,0 +1,51 @@
+name: Publish Bahamut Snapshot
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bahamut-snapshot
+  cancel-in-progress: true
+
+env:
+  FORUM_URL: https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+  REQUEST_TIMEOUT_SECONDS: "20"
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install .
+          python -m playwright install chromium
+
+      - name: Fetch Bahamut snapshot
+        run: |
+          python -m wwm_codebot.snapshot_cli \
+            --url "${FORUM_URL}" \
+            --output snapshot/bahamut_snapshot.json \
+            --timeout "${REQUEST_TIMEOUT_SECONDS}"
+
+      - name: Publish snapshot branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./snapshot
+          publish_branch: snapshot-cache
+          force_orphan: true

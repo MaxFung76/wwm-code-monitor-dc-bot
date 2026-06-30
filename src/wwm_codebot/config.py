@@ -13,6 +13,7 @@ class Settings:
     discord_channel_id: int
     discord_guild_id: int | None
     forum_url: str
+    remote_snapshot_url: str | None
     database_path: Path
     monitor_interval_minutes: int = 10
     request_timeout_seconds: int = 20
@@ -36,6 +37,7 @@ class Settings:
             "FORUM_URL",
             "https://forum.gamer.com.tw/C.php?bsn=75703&snA=388",
         ).strip()
+        remote_snapshot_url = os.getenv("REMOTE_SNAPSHOT_URL", "").strip() or None
 
         database_path = Path(
             os.getenv("DATABASE_PATH", "data/redeem_codes.db").strip()
@@ -46,6 +48,7 @@ class Settings:
             discord_channel_id=int(channel_id),
             discord_guild_id=guild_id,
             forum_url=forum_url,
+            remote_snapshot_url=remote_snapshot_url,
             database_path=database_path,
             monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "10")),
             request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),

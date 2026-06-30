@@ -44,6 +44,7 @@ pip install -e .[dev]
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+REMOTE_SNAPSHOT_URL=
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=10
 REQUEST_TIMEOUT_SECONDS=20
@@ -109,6 +110,7 @@ cp .env.example .env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+REMOTE_SNAPSHOT_URL=
 MONITOR_INTERVAL_MINUTES=10
 REQUEST_TIMEOUT_SECONDS=20
 USE_REGISTRY_IMAGE=false
@@ -116,6 +118,14 @@ IMAGE_NAME=wwm-codebot:local
 ```
 
 `docker-compose.yml` 會自動把資料庫路徑設成 `/app/data/redeem_codes.db`，並把主機上的 `./data` 掛進容器，所以 SQLite 會持久化保留。
+
+如果你的 VPS 直連巴哈容易遇到 `403` 或維護頁，建議改用 GitHub Actions 產生 snapshot，再讓 VPS 讀取：
+
+```env
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+```
+
+設了 `REMOTE_SNAPSHOT_URL` 後，bot 會優先讀這份 snapshot，不再由 VPS 直接抓巴哈文章。
 
 ### 4. 使用 `deploy.sh` 一鍵部署
 
@@ -273,12 +283,48 @@ BRANCH=main ./deploy.sh
 
 之後再交給 GitHub Actions 自動部署。
 
-### 11. 常用指令
+### 11. GitHub Actions 抓巴哈 Snapshot
+
+已新增 workflow： [.github/workflows/bahamut-snapshot.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/bahamut-snapshot.yml)
+
+用途：
+
+- 每 10 分鐘在 GitHub runner 抓一次巴哈文章
+- 產生 `bahamut_snapshot.json`
+- 發佈到 `snapshot-cache` 分支
+
+第一次使用建議：
+
+1. 到 GitHub repo：
+   - `Settings > Actions > General > Workflow permissions`
+   - 設成 `Read and write permissions`
+2. 手動執行一次 `Publish Bahamut Snapshot`
+3. 成功後把 VPS `.env` 設成：
+
+```env
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+```
+
+以你目前 repo 為例：
+
+```env
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/MaxFung76/wwm-code-monitor-dc-bot/snapshot-cache/bahamut_snapshot.json
+```
+
+4. 重啟 VPS bot：
+
+```bash
+docker compose restart wwm-codebot
+```
+
+之後 `/sync_now` 與排程監控都會走 `github_snapshot` 模式。
+
+### 12. 常用指令
 
 - `/setup_buttons`：在目前頻道重新發送面板，並記住該頻道作為面板/監聽頻道
 - `/sync_now`：立刻同步巴哈文章並更新狀態（可選填特定 code 來檢查 status）
 
-### 12. 部署注意事項
+### 13. 部署注意事項
 
 - 這是 Discord Bot，不需要開放 HTTP port。
 - 請確認 VPS 出站網路可連到 `discord.com` 與 `forum.gamer.com.tw`。
@@ -288,7 +334,7 @@ BRANCH=main ./deploy.sh
   - `watchtower` 負責 registry 映像有新版時自動套用
 - 若之後要搬到 Supabase，只需要替換 `storage.py` 的資料層，不影響 Docker 部署方式。
 
-### 12. 常見錯誤排除
+### 14. 常見錯誤排除
 
 #### sqlite3.OperationalError: unable to open database file
 

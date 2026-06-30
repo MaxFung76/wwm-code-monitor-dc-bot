@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 
 from wwm_codebot.bahamut import _ensure_article_html, parse_bahamut_codes
-from wwm_codebot.models import CodeStatus
+from wwm_codebot.models import CodeSnapshot, CodeStatus, RedeemCode
+from wwm_codebot.snapshot_io import snapshot_from_json, snapshot_to_json
 from wwm_codebot.storage import Storage
 
 
@@ -105,3 +106,26 @@ def test_ensure_article_html_rejects_maintenance_page() -> None:
 
     with pytest.raises(RuntimeError, match="maintenance"):
         _ensure_article_html(html, source="test")
+
+
+def test_snapshot_json_round_trip() -> None:
+    snapshot = CodeSnapshot(
+        source_url="https://example.com",
+        observed_at=parse_bahamut_codes(
+            '<div class="c-article__content"><div>TESTCODE1</div></div>',
+            "https://example.com",
+        ).observed_at,
+        codes=[
+            RedeemCode(code="TESTCODE1", status=CodeStatus.ACTIVE, note="note"),
+            RedeemCode(code="TESTCODE2", status=CodeStatus.EXPIRED, note=None),
+        ],
+    )
+
+    restored = snapshot_from_json(snapshot_to_json(snapshot))
+
+    assert restored.source_url == snapshot.source_url
+    assert restored.observed_at == snapshot.observed_at
+    assert [(item.code, item.status, item.note) for item in restored.codes] == [
+        ("TESTCODE1", CodeStatus.ACTIVE, "note"),
+        ("TESTCODE2", CodeStatus.EXPIRED, None),
+    ]

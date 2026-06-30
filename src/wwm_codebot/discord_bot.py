@@ -5,12 +5,14 @@ import contextlib
 from datetime import datetime, timezone
 
 import discord
+import httpx
 from discord import app_commands
 from discord.ext import commands, tasks
 
 from .bahamut import BahamutMonitor, extract_codes_from_text
 from .config import Settings
-from .models import CodeStatus, RedeemCode
+from .models import CodeSnapshot, CodeStatus, RedeemCode
+from .snapshot_io import snapshot_from_json
 from .storage import Storage
 
 PANEL_STATE_KEY = "panel_message_id"
@@ -239,7 +241,7 @@ class RedeemCodeBot(commands.Bot):
         )
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            snapshot = await self.monitor.fetch_snapshot()
+            snapshot, mode = await self.fetch_monitor_snapshot()
             result = await self.storage.reconcile_codes(
                 snapshot.codes,
                 source_url=snapshot.source_url,
@@ -251,6 +253,7 @@ class RedeemCodeBot(commands.Bot):
 
             lines = [
                 "已同步巴哈文章。",
+                f"- mode: {mode}",
                 f"- active: {active_count}",
                 f"- expired: {expired_count}",
                 f"- new_active: {len(result.new_active_codes)}",
@@ -315,7 +318,7 @@ class RedeemCodeBot(commands.Bot):
 
     async def run_monitor_cycle(self, *, reason: str) -> None:
         try:
-            snapshot = await self.monitor.fetch_snapshot()
+            snapshot, mode = await self.fetch_monitor_snapshot()
             result = await self.storage.reconcile_codes(
                 snapshot.codes,
                 source_url=snapshot.source_url,
@@ -324,10 +327,10 @@ class RedeemCodeBot(commands.Bot):
             if result.new_active_codes:
                 await self.announce_new_codes(
                     result.new_active_codes,
-                    title=f"巴哈監控發現新有效兌換碼 ({reason})",
+                    title=f"巴哈監控發現新有效兌換碼 ({reason}/{mode})",
                 )
         except Exception as exc:
-            channel = await self.resolve_channel()
+            channel = await self.resolve_channel(await self.get_panel_channel_id())
             if channel is not None:
                 await channel.send(f"監控執行失敗：`{type(exc).__name__}` {exc}")
             else:
@@ -484,3 +487,16 @@ class RedeemCodeBot(commands.Bot):
             flush=True,
         )
         return None
+
+    async def fetch_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
+        if self.settings.remote_snapshot_url:
+            snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
+            return snapshot, "github_snapshot"
+        snapshot = await self.monitor.fetch_snapshot()
+        return snapshot, "live_bahamut"
+
+    async def fetch_remote_snapshot(self, snapshot_url: str) -> CodeSnapshot:
+        async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
+            response = await client.get(snapshot_url, follow_redirects=True)
+            response.raise_for_status()
+        return snapshot_from_json(response.text)
