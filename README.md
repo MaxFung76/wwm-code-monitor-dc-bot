@@ -2,6 +2,59 @@
 
 這個專案會定期監控巴哈姆特指定文章，抓取兌換碼並區分有效/過期狀態，然後同步到 Discord 頻道與 SQLite。
 
+目前系統已同時支援兩種資料來源模式：
+
+- `live_bahamut`：Bot 直接從 VPS 抓巴哈文章
+- `github_snapshot`：GitHub Actions 先抓巴哈並產出 snapshot，VPS Bot 再讀 snapshot
+
+如果你的 VPS 直連巴哈常遇到 `403 Forbidden`、`系統維修中`、或內容抓不到文章，建議正式環境以 `github_snapshot` 為主。
+
+## 系統架構
+
+### 主要元件
+
+- `Discord Bot`
+  - 提供面板按鈕、Slash Commands、訊息監聽
+  - 負責將監控結果寫入 SQLite 與發送 Discord 訊息
+- `SQLite`
+  - 儲存目前每個兌換碼的最終狀態
+  - 保留觀測紀錄與面板訊息狀態
+- `Bahamut Parser`
+  - 解析巴哈文章 HTML
+  - 以 `<strike>` / `<s>` / `<del>` 判定過期碼
+- `GitHub Actions Snapshot`
+  - 定期在 GitHub runner 抓巴哈文章
+  - 產生 `bahamut_snapshot.json`
+  - 發佈到 `snapshot-cache` 分支供 VPS 讀取
+- `Watchtower`
+  - 當 GHCR 有新版 image 時，自動拉下並重啟 bot
+
+### 推薦正式流程
+
+```text
+GitHub Actions
+  -> 抓巴哈文章
+  -> 產生 bahamut_snapshot.json
+  -> 發佈到 snapshot-cache 分支
+
+VPS Bot
+  -> 讀取 REMOTE_SNAPSHOT_URL
+  -> reconcile 到 SQLite
+  -> Discord 公告新有效碼 / 更新面板
+```
+
+### 狀態來源優先順序
+
+- `monitor`
+  - 代表來自巴哈監控或 GitHub snapshot
+  - 適合當成最終真實狀態來源
+- `message`
+  - 代表使用者在頻道內貼出的碼
+  - 可先收錄，但之後若 monitor 判定為 expired，會被覆蓋
+- `manual`
+  - 代表透過面板手動新增
+  - 一樣會被後續 monitor 結果覆蓋
+
 ## 已完成功能
 
 - 監控巴哈文章 `snA=388`
@@ -10,8 +63,23 @@
 - Discord 面板按鈕：
   - `新增兌換碼`
   - `查詢當月列表`
+- Slash Commands：
+  - `/setup_buttons`
+  - `/sync_now`
 - 頻道文字訊息監聽，自動抓取成員貼上的代碼
 - 自動置底：每次互動或新訊息後刪除舊面板並重發到最下方
+
+## 快速上手
+
+如果你是第一次接手這個專案，最建議照這個順序做：
+
+1. push 專案到 GitHub
+2. 開啟 GHCR image build
+3. 開啟 `Publish Bahamut Snapshot`
+4. 在 VPS 設定 `.env`
+5. 啟動 `wwm-codebot` 與 `watchtower`
+6. 在 Discord 執行 `/setup_buttons`
+7. 執行 `/sync_now` 驗證模式是否為 `github_snapshot`
 
 ## 專案結構
 
@@ -50,6 +118,48 @@ MONITOR_INTERVAL_MINUTES=10
 REQUEST_TIMEOUT_SECONDS=20
 ```
 
+### 建議正式環境設定
+
+如果 VPS 抓巴哈不穩，`.env` 建議至少長這樣：
+
+```env
+DISCORD_TOKEN=your-discord-bot-token
+DISCORD_CHANNEL_ID=123456789012345678
+DISCORD_GUILD_ID=123456789012345678
+FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+DATABASE_PATH=data/redeem_codes.db
+MONITOR_INTERVAL_MINUTES=10
+REQUEST_TIMEOUT_SECONDS=20
+USE_REGISTRY_IMAGE=true
+IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
+```
+
+### 重要環境變數說明
+
+- `DISCORD_TOKEN`
+  - Discord Bot Token
+- `DISCORD_CHANNEL_ID`
+  - 面板預設頻道
+  - 若之後執行 `/setup_buttons`，bot 會把目前頻道記成新的面板頻道
+- `DISCORD_GUILD_ID`
+  - 讓 slash command 同步到指定伺服器
+  - 有設定時，`/setup_buttons` 與 `/sync_now` 會比較快出現
+- `FORUM_URL`
+  - 巴哈文章 URL
+- `REMOTE_SNAPSHOT_URL`
+  - 若有設定，bot 會優先讀這份 JSON，不再由 VPS 直接抓巴哈
+- `DATABASE_PATH`
+  - SQLite 檔案位置
+- `MONITOR_INTERVAL_MINUTES`
+  - Bot 自己執行同步的頻率
+- `REQUEST_TIMEOUT_SECONDS`
+  - HTTP / browser 抓取 timeout
+- `USE_REGISTRY_IMAGE`
+  - `true` 表示 VPS 走 GHCR image 模式
+- `IMAGE_NAME`
+  - image 名稱，建議用 `ghcr.io/<owner>/<repo>:latest`
+
 ## Discord Bot 權限
 
 請在 Discord Developer Portal 啟用：
@@ -70,6 +180,44 @@ Bot 進伺服器時至少要有：
 ```bash
 python -m wwm_codebot.main
 ```
+
+## 使用方式
+
+### Discord 面板
+
+- `新增兌換碼`
+  - 開啟 Modal 輸入一筆或多筆代碼
+- `查詢當月列表`
+  - 顯示本月已收錄碼清單
+  - 若資料太多，會自動截斷並顯示「其餘 X 筆未顯示」
+
+### Slash Commands
+
+- `/setup_buttons`
+  - 在目前頻道重發面板
+  - 也會把這個頻道記成新的面板頻道
+- `/sync_now`
+  - 立刻執行一次同步
+  - 可加 `code` 參數確認特定代碼狀態
+
+範例：
+
+```text
+/sync_now code:AC46AQH368
+```
+
+若同步成功，回覆通常會包含：
+
+- `mode: github_snapshot` 或 `mode: live_bahamut`
+- `snapshot[CODE]: active/expired/not found`
+- `db[CODE]: active/expired (source_type)`
+
+### 頻道貼碼
+
+- 成員直接在面板頻道貼上文字
+- Bot 會自動從文字中抓出代碼
+- 若是新有效碼，會立即公告
+- 然後把面板重新置底
 
 ## 雲端部署
 
@@ -293,6 +441,30 @@ BRANCH=main ./deploy.sh
 - 產生 `bahamut_snapshot.json`
 - 發佈到 `snapshot-cache` 分支
 
+#### 更新頻率說明
+
+目前 workflow 設定是：
+
+```yaml
+schedule:
+  - cron: "*/10 * * * *"
+```
+
+代表大約每 10 分鐘跑一次，也就是：
+
+- `00`
+- `10`
+- `20`
+- `30`
+- `40`
+- `50`
+
+注意：
+
+- GitHub Actions 的排程不保證秒級準時
+- 實際可能會延遲幾分鐘
+- 若你要立即更新，可手動按 `Run workflow`
+
 第一次使用建議：
 
 1. 到 GitHub repo：
@@ -319,6 +491,38 @@ docker compose restart wwm-codebot
 
 之後 `/sync_now` 與排程監控都會走 `github_snapshot` 模式。
 
+#### 如何確認 snapshot 模式已生效
+
+1. 確認 raw URL 可以打開：
+
+```text
+https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+```
+
+2. 確認 VPS `.env` 已設：
+
+```env
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+```
+
+3. 重啟 bot：
+
+```bash
+docker compose restart wwm-codebot
+```
+
+4. 在 Discord 執行：
+
+```text
+/sync_now code:AC46AQH368
+```
+
+如果回覆裡有：
+
+- `mode: github_snapshot`
+
+就代表 VPS 已經不再直接抓巴哈。
+
 ### 12. 常用指令
 
 - `/setup_buttons`：在目前頻道重新發送面板，並記住該頻道作為面板/監聽頻道
@@ -333,6 +537,43 @@ docker compose restart wwm-codebot
   - `GitHub Actions` 負責原始碼更新後重建或拉新版本
   - `watchtower` 負責 registry 映像有新版時自動套用
 - 若之後要搬到 Supabase，只需要替換 `storage.py` 的資料層，不影響 Docker 部署方式。
+
+## 日常維運
+
+### 最常用的 6 個檢查
+
+```bash
+docker compose ps
+docker compose logs -f wwm-codebot
+docker compose logs -f watchtower
+docker inspect wwm-codebot --format '{{.Config.Image}}'
+docker ps -a --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+cat .env | grep REMOTE_SNAPSHOT_URL
+```
+
+### 判斷更新是否成功
+
+- GitHub Actions `Build and Push GHCR Image` 成功
+- `watchtower` log 顯示找到新 image 並重啟 `wwm-codebot`
+- `docker inspect wwm-codebot --format '{{.Image}}'` 的 digest 改變
+- bot logs 有：
+  - `Guild commands synced: ...`
+  - `Logged in as ...`
+
+### 判斷 snapshot 是否成功
+
+- `Publish Bahamut Snapshot` workflow 成功
+- raw URL 可正常開啟 JSON
+- `/sync_now` 顯示 `mode: github_snapshot`
+
+### 發生問題時的建議排查順序
+
+1. 先看 `docker compose ps`
+2. 再看 `docker logs --tail=200 wwm-codebot`
+3. 確認 `REMOTE_SNAPSHOT_URL` 是否存在
+4. 確認 GitHub snapshot raw URL 是否可打開
+5. 確認 GHCR image 是否有更新
+6. 最後才回頭檢查 Discord 權限或巴哈抓取
 
 ### 14. 常見錯誤排除
 
@@ -379,6 +620,54 @@ docker compose logs -f watchtower
 docker version
 docker info
 ```
+
+#### Discord 按鈕顯示「該申請未受回應」
+
+常見原因：
+
+- Bot 沒有在 3 秒內回應 interaction
+- 按到舊面板
+- 回覆內容超過 Discord 限制
+
+目前系統已處理：
+
+- 按鈕先 `defer`
+- 月清單超過 2000 字會自動截斷
+
+如果仍發生，請看：
+
+```bash
+docker compose logs --since=2m wwm-codebot
+```
+
+#### Discord 回覆 `Invalid Form Body` / `Must be 2000 or fewer in length`
+
+這代表訊息超過 Discord 2000 字限制。
+
+目前 `查詢當月列表` 已內建截斷邏輯；如果你仍看到這個錯，通常代表 VPS 還沒更新到最新 image。
+
+請執行：
+
+```bash
+docker compose pull wwm-codebot
+docker compose up -d --remove-orphans
+docker compose restart wwm-codebot
+```
+
+#### 巴哈在 VPS 上一直是 403 或系統維修中
+
+若 VPS 直連巴哈一直失敗，請不要再依賴 `live_bahamut`。
+
+改用：
+
+- GitHub Actions `Publish Bahamut Snapshot`
+- VPS `.env` 設定 `REMOTE_SNAPSHOT_URL`
+
+只要 `/sync_now` 顯示：
+
+- `mode: github_snapshot`
+
+就代表已成功繞過 VPS 對巴哈的連線問題。
 
 ## 測試
 
