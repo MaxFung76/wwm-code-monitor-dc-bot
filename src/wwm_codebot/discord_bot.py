@@ -356,9 +356,7 @@ class RedeemCodeBot(commands.Bot):
         hidden_count = 0
         limit = 1900
         for index, row in enumerate(rows):
-            status_label = "有效" if row.status == CodeStatus.ACTIVE else "過期"
-            timestamp = row.first_seen_at.split("T", 1)[0]
-            line = f"- `{row.code}` | {status_label} | {row.source_type} | {timestamp}"
+            line = f"- `{row.code}`"
             candidate = "\n".join([*lines, line])
             if len(candidate) > limit:
                 hidden_count = len(rows) - index
