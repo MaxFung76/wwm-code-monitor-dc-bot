@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -71,7 +72,17 @@ class BahamutMonitor:
         self.timeout_seconds = timeout_seconds
 
     async def fetch_snapshot(self) -> CodeSnapshot:
-        headers = {
+        try:
+            html = await self._fetch_html_with_httpx()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 403:
+                raise
+            print("Bahamut returned 403 for httpx, retrying with curl.", flush=True)
+            html = await self._fetch_html_with_curl()
+        return parse_bahamut_codes(html, self.forum_url)
+
+    def _build_headers(self) -> dict[str, str]:
+        return {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -80,6 +91,9 @@ class BahamutMonitor:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-TW,zh;q=0.9",
         }
+
+    async def _fetch_html_with_httpx(self) -> str:
+        headers = self._build_headers()
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds,
             headers=headers,
@@ -88,7 +102,50 @@ class BahamutMonitor:
         ) as client:
             response = await client.get(self.forum_url)
             response.raise_for_status()
-        return parse_bahamut_codes(response.text, self.forum_url)
+        return response.text
+
+    async def _fetch_html_with_curl(self) -> str:
+        headers = self._build_headers()
+        command = [
+            "curl",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--fail",
+            "--max-time",
+            str(self.timeout_seconds),
+            self.forum_url,
+            "-A",
+            headers["User-Agent"],
+            "-H",
+            f"Accept: {headers['Accept']}",
+            "-H",
+            f"Accept-Language: {headers['Accept-Language']}",
+        ]
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError("curl is not installed in the runtime environment.") from exc
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(),
+                timeout=self.timeout_seconds + 2,
+            )
+        except asyncio.TimeoutError as exc:
+            process.kill()
+            await process.communicate()
+            raise TimeoutError("curl request timed out.") from exc
+
+        if process.returncode != 0:
+            error_text = stderr.decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(f"curl request failed: {error_text}")
+
+        return stdout.decode("utf-8", errors="ignore")
 
 
 def _find_article_root(soup: BeautifulSoup) -> Tag:
