@@ -349,8 +349,9 @@ class RedeemCodeBot(commands.Bot):
 
     async def build_monthly_report(self) -> str:
         rows = await self.storage.get_monthly_rows(now=datetime.now(timezone.utc))
+        rows = [row for row in rows if row.status == CodeStatus.ACTIVE]
         if not rows:
-            return "本月目前沒有已收錄的兌換碼。"
+            return "本月目前沒有有效的兌換碼。"
 
         lines = ["本月已收錄兌換碼："]
         hidden_count = 0
