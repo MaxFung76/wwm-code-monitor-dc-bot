@@ -219,13 +219,33 @@ GitHub repo 設定需確認：
 - `Settings > Actions > General > Workflow permissions` 設定為 `Read and write permissions`
 - GHCR 映像名稱要求全小寫；本專案 workflow 會自動轉成小寫推送到 `ghcr.io/<owner>/<repo>:latest`
 
+VPS 端若遇到 watchtower `403 Forbidden` / `auth not present`，通常代表 GHCR 套件是 private，需要登入憑證。建議做法：
+
+1. 建立 GitHub PAT：
+   - scopes: `read:packages`
+   - 若 repo 是 private，通常也需要 `repo`
+2. 在 VPS 專案目錄建立 docker config 並登入（credentials 會存到 `./.docker/config.json`）：
+
+```bash
+mkdir -p .docker
+DOCKER_CONFIG=./.docker docker login ghcr.io -u <github-username>
+```
+
+3. 重啟 watchtower：
+
+```bash
+docker compose up -d --remove-orphans watchtower
+docker compose logs -f watchtower
+```
+
+或是把 GHCR package 設為 public（Packages → Package settings → Change visibility），就不需要登入。
+
 ### 10. GitHub Actions 自動 SSH 部署
 
 已新增 workflow： [.github/workflows/deploy.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/deploy.yml)
 
 觸發條件：
 
-- push 到 `main`
 - 手動執行 `workflow_dispatch`
 
 請在 GitHub repository secrets 設定以下值：

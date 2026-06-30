@@ -1,9 +1,6 @@
 name: Deploy To VPS
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 jobs:
@@ -20,8 +17,8 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_PORT || 22 }}
-          script_stop: true
+          port: ${{ secrets.VPS_PORT != '' && secrets.VPS_PORT || '22' }}
+          command_timeout: 30m
           script: |
             cd ${{ secrets.VPS_APP_DIR }}
             chmod +x deploy.sh
