@@ -237,6 +237,27 @@ BRANCH=main ./deploy.sh
   - `watchtower` 負責 registry 映像有新版時自動套用
 - 若之後要搬到 Supabase，只需要替換 `storage.py` 的資料層，不影響 Docker 部署方式。
 
+### 12. 常見錯誤排除
+
+#### sqlite3.OperationalError: unable to open database file
+
+這通常是 `./data` 掛載進容器後，權限不足導致容器使用者無法寫入。
+
+在 VPS 專案目錄下執行：
+
+```bash
+mkdir -p data
+sudo chown -R 1000:1000 data
+```
+
+再重啟：
+
+```bash
+docker compose up -d --build --remove-orphans
+```
+
+如果你曾用 `sudo` 建立 `data/`，很容易變成 root 擁有，導致容器內無法寫入。
+
 ## 測試
 
 ```bash

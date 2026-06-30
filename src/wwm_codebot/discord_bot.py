@@ -117,7 +117,10 @@ class RedeemCodeBot(commands.Bot):
         if not self._initial_sync_done:
             self._initial_sync_done = True
             await self.run_monitor_cycle(reason="startup")
-            await self.repost_panel()
+            try:
+                await self.repost_panel()
+            except Exception as exc:
+                print(f"Failed to post panel: {type(exc).__name__} {exc}")
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
@@ -168,6 +171,8 @@ class RedeemCodeBot(commands.Bot):
             channel = await self.resolve_channel()
             if channel is not None:
                 await channel.send(f"監控執行失敗：`{type(exc).__name__}` {exc}")
+            else:
+                print(f"Monitor failed and channel not resolved: {type(exc).__name__} {exc}")
 
     async def announce_new_codes(self, codes: list[RedeemCode], *, title: str) -> None:
         channel = await self.resolve_channel()
@@ -197,6 +202,7 @@ class RedeemCodeBot(commands.Bot):
         async with self.panel_lock:
             channel = await self.resolve_channel()
             if channel is None:
+                print(f"Panel skipped: channel {self.settings.discord_channel_id} not resolved")
                 return
 
             current_id = await self.storage.get_state(PANEL_STATE_KEY)
@@ -205,25 +211,38 @@ class RedeemCodeBot(commands.Bot):
                     old_message = await channel.fetch_message(int(current_id))
                     await old_message.delete()
 
-            panel_message = await channel.send(
-                "\n".join(
-                    [
-                        "**兌換碼面板**",
-                        "- 使用按鈕可人工新增代碼或查詢本月清單",
-                        "- 機器人會自動監控巴哈文章並同步新碼",
-                        "- 頻道內成員直接貼代碼，機器人也會自動收錄",
-                    ]
-                ),
-                view=ControlPanelView(self),
-            )
-            await self.storage.set_state(PANEL_STATE_KEY, str(panel_message.id))
+            try:
+                panel_message = await channel.send(
+                    "\n".join(
+                        [
+                            "**兌換碼面板**",
+                            "- 使用按鈕可人工新增代碼或查詢本月清單",
+                            "- 機器人會自動監控巴哈文章並同步新碼",
+                            "- 頻道內成員直接貼代碼，機器人也會自動收錄",
+                        ]
+                    ),
+                    view=ControlPanelView(self),
+                )
+                await self.storage.set_state(PANEL_STATE_KEY, str(panel_message.id))
+            except Exception as exc:
+                print(f"Failed to send panel message: {type(exc).__name__} {exc}")
 
-    async def resolve_channel(self) -> discord.TextChannel | None:
+    async def resolve_channel(self) -> discord.TextChannel | discord.Thread | None:
         channel = self.get_channel(self.settings.discord_channel_id)
-        if isinstance(channel, discord.TextChannel):
+        if isinstance(channel, (discord.TextChannel, discord.Thread)):
             return channel
 
-        fetched = await self.fetch_channel(self.settings.discord_channel_id)
-        if isinstance(fetched, discord.TextChannel):
+        try:
+            fetched = await self.fetch_channel(self.settings.discord_channel_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
+            print(
+                "Failed to fetch channel "
+                f"{self.settings.discord_channel_id}: {type(exc).__name__} {exc}"
+            )
+            return None
+
+        if isinstance(fetched, (discord.TextChannel, discord.Thread)):
             return fetched
+
+        print(f"Unsupported channel type for {self.settings.discord_channel_id}: {type(fetched)}")
         return None

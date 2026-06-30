@@ -5,7 +5,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos "" appuser
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser
 
 COPY pyproject.toml README.md ./
 COPY src ./src
