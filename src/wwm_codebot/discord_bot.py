@@ -38,6 +38,8 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
             await interaction.response.send_message("沒有辨識到任何兌換碼。", ephemeral=True)
             return
 
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
         result = await self.bot.storage.reconcile_codes(
             codes,
             source_url=f"discord://channel/{interaction.channel_id}",
@@ -50,14 +52,14 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
             )
 
         joined_codes = ", ".join(item.code for item in codes)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"已處理 {len(codes)} 筆兌換碼：{joined_codes}",
             ephemeral=True,
         )
         await self.bot.repost_panel()
 
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
-        print(f"Modal error: {type(error).__name__} {error}")
+        print(f"Modal error: {type(error).__name__} {error}", flush=True)
         if interaction.response.is_done():
             await interaction.followup.send("操作失敗，請稍後再試。", ephemeral=True)
         else:
@@ -91,8 +93,9 @@ class ControlPanelView(discord.ui.View):
         interaction: discord.Interaction,
         _: discord.ui.Button,
     ) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
         report = await self.bot.build_monthly_report()
-        await interaction.response.send_message(report, ephemeral=True)
+        await interaction.followup.send(report, ephemeral=True)
         await self.bot.repost_panel()
 
     async def on_error(
@@ -101,7 +104,7 @@ class ControlPanelView(discord.ui.View):
         error: Exception,
         _: discord.ui.Item[discord.ui.View],
     ) -> None:
-        print(f"View error: {type(error).__name__} {error}")
+        print(f"View error: {type(error).__name__} {error}", flush=True)
         if interaction.response.is_done():
             await interaction.followup.send("操作失敗，請稍後再試。", ephemeral=True)
         else:
@@ -132,14 +135,17 @@ class RedeemCodeBot(commands.Bot):
         self.monitor_forum.start()
 
     async def on_ready(self) -> None:
-        print(f"Logged in as {self.user} ({self.user.id if self.user else 'unknown'})")
+        print(
+            f"Logged in as {self.user} ({self.user.id if self.user else 'unknown'})",
+            flush=True,
+        )
         if not self._initial_sync_done:
             self._initial_sync_done = True
             await self.run_monitor_cycle(reason="startup")
             try:
                 await self.repost_panel()
             except Exception as exc:
-                print(f"Failed to post panel: {type(exc).__name__} {exc}")
+                print(f"Failed to post panel: {type(exc).__name__} {exc}", flush=True)
 
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
@@ -191,7 +197,10 @@ class RedeemCodeBot(commands.Bot):
             if channel is not None:
                 await channel.send(f"監控執行失敗：`{type(exc).__name__}` {exc}")
             else:
-                print(f"Monitor failed and channel not resolved: {type(exc).__name__} {exc}")
+                print(
+                    f"Monitor failed and channel not resolved: {type(exc).__name__} {exc}",
+                    flush=True,
+                )
 
     async def announce_new_codes(self, codes: list[RedeemCode], *, title: str) -> None:
         channel = await self.resolve_channel()
@@ -221,7 +230,10 @@ class RedeemCodeBot(commands.Bot):
         async with self.panel_lock:
             channel = await self.resolve_channel()
             if channel is None:
-                print(f"Panel skipped: channel {self.settings.discord_channel_id} not resolved")
+                print(
+                    f"Panel skipped: channel {self.settings.discord_channel_id} not resolved",
+                    flush=True,
+                )
                 return
 
             current_id = await self.storage.get_state(PANEL_STATE_KEY)
@@ -244,7 +256,10 @@ class RedeemCodeBot(commands.Bot):
                 )
                 await self.storage.set_state(PANEL_STATE_KEY, str(panel_message.id))
             except Exception as exc:
-                print(f"Failed to send panel message: {type(exc).__name__} {exc}")
+                print(
+                    f"Failed to send panel message: {type(exc).__name__} {exc}",
+                    flush=True,
+                )
 
     async def resolve_channel(self) -> discord.TextChannel | discord.Thread | None:
         channel = self.get_channel(self.settings.discord_channel_id)
@@ -256,12 +271,16 @@ class RedeemCodeBot(commands.Bot):
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
             print(
                 "Failed to fetch channel "
-                f"{self.settings.discord_channel_id}: {type(exc).__name__} {exc}"
+                f"{self.settings.discord_channel_id}: {type(exc).__name__} {exc}",
+                flush=True,
             )
             return None
 
         if isinstance(fetched, (discord.TextChannel, discord.Thread)):
             return fetched
 
-        print(f"Unsupported channel type for {self.settings.discord_channel_id}: {type(fetched)}")
+        print(
+            f"Unsupported channel type for {self.settings.discord_channel_id}: {type(fetched)}",
+            flush=True,
+        )
         return None
