@@ -153,7 +153,21 @@ class RedeemCodeBot(commands.Bot):
             )
         )
         if self.settings.discord_guild_id:
-            await self.tree.sync(guild=discord.Object(id=self.settings.discord_guild_id))
+            guild = discord.Object(id=self.settings.discord_guild_id)
+            self.tree.copy_global_to(guild=guild)
+            synced = await self.tree.sync(guild=guild)
+            print(
+                "Guild commands synced: "
+                + ", ".join(command.name for command in synced),
+                flush=True,
+            )
+        else:
+            synced = await self.tree.sync()
+            print(
+                "Global commands synced: "
+                + ", ".join(command.name for command in synced),
+                flush=True,
+            )
 
     async def on_ready(self) -> None:
         print(
