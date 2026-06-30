@@ -118,7 +118,7 @@ class ControlPanelView(discord.ui.View):
         await interaction.response.send_modal(AddCodeModal(self.bot))
 
     @discord.ui.button(
-        label="查詢當月列表",
+        label="新兌換碼",
         style=discord.ButtonStyle.secondary,
         custom_id="panel:monthly-list",
     )
@@ -353,9 +353,9 @@ class RedeemCodeBot(commands.Bot):
             now=datetime.now(timezone.utc),
         )
         if not rows:
-            return "本月目前沒有尚未看過的有效兌換碼。"
+            return "目前沒有尚未看過的新兌換碼。"
 
-        lines = ["本月已收錄兌換碼："]
+        lines = ["尚未看過的新兌換碼："]
         displayed_codes: list[str] = []
         hidden_count = 0
         limit = 1900
@@ -410,7 +410,7 @@ class RedeemCodeBot(commands.Bot):
                     "\n".join(
                         [
                             "**兌換碼面板**",
-                            "- 使用按鈕可人工新增代碼或查詢本月清單",
+                            "- 使用按鈕可人工新增代碼或查看尚未看過的新兌換碼",
                             "- 機器人會自動監控巴哈文章並同步新碼",
                             "- 頻道內成員直接貼代碼，機器人也會自動收錄",
                         ]
