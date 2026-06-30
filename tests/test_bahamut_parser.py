@@ -129,3 +129,55 @@ def test_snapshot_json_round_trip() -> None:
         ("TESTCODE1", CodeStatus.ACTIVE, "note"),
         ("TESTCODE2", CodeStatus.EXPIRED, None),
     ]
+
+
+def test_storage_initialize_removes_numeric_only_codes(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "codes.db")
+
+    import asyncio
+    import sqlite3
+    from datetime import datetime, timezone
+
+    asyncio.run(storage.initialize())
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(storage.database_path)
+    conn.execute(
+        """
+        INSERT INTO redeem_codes(
+            code, status, source_url, source_type, note,
+            first_seen_at, last_seen_at, last_status_change_at, last_announced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "1182577423678713917",
+            "active",
+            "https://example.com",
+            "message",
+            "numeric id",
+            now,
+            now,
+            now,
+            now,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO observations(code, status, source_url, source_type, note, observed_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "1182577423678713917",
+            "active",
+            "https://example.com",
+            "message",
+            "numeric id",
+            now,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    asyncio.run(storage.initialize())
+
+    assert asyncio.run(storage.get_code_status("1182577423678713917")) is None

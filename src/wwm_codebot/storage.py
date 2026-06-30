@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .bahamut import is_probable_code
 from .models import CodeStatus, ReconcileResult, RedeemCode
 
 
@@ -83,6 +84,7 @@ class Storage:
                 );
                 """
             )
+            self._delete_invalid_codes(conn)
 
     def _reconcile_codes(
         self,
@@ -91,7 +93,11 @@ class Storage:
         source_type: str,
     ) -> ReconcileResult:
         now = datetime.now(timezone.utc).isoformat()
-        deduped = {item.code: item for item in codes}
+        deduped = {
+            item.code: item
+            for item in codes
+            if is_probable_code(item.code)
+        }
         new_active_codes: list[RedeemCode] = []
         changed_codes: list[RedeemCode] = []
 
@@ -216,6 +222,8 @@ class Storage:
         return [MonthlyRow(**dict(row)) for row in rows]
 
     def _get_code_status(self, code: str) -> tuple[str, str] | None:
+        if not is_probable_code(code):
+            return None
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -233,3 +241,22 @@ class Storage:
         conn = sqlite3.connect(self.database_path)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def _delete_invalid_codes(self, conn: sqlite3.Connection) -> None:
+        invalid_codes = [
+            str(row["code"])
+            for row in conn.execute("SELECT code FROM redeem_codes").fetchall()
+            if not is_probable_code(str(row["code"]))
+        ]
+        if not invalid_codes:
+            return
+
+        placeholders = ", ".join("?" for _ in invalid_codes)
+        conn.execute(
+            f"DELETE FROM redeem_codes WHERE code IN ({placeholders})",
+            invalid_codes,
+        )
+        conn.execute(
+            f"DELETE FROM observations WHERE code IN ({placeholders})",
+            invalid_codes,
+        )
