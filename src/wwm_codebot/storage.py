@@ -48,6 +48,21 @@ class Storage:
     async def get_monthly_rows(self, now: datetime | None = None) -> list[MonthlyRow]:
         return await asyncio.to_thread(self._get_monthly_rows, now)
 
+    async def get_unseen_monthly_rows(
+        self,
+        user_id: int,
+        now: datetime | None = None,
+    ) -> list[MonthlyRow]:
+        return await asyncio.to_thread(self._get_unseen_monthly_rows, user_id, now)
+
+    async def mark_codes_seen(
+        self,
+        user_id: int,
+        codes: list[str],
+        seen_at: datetime | None = None,
+    ) -> None:
+        await asyncio.to_thread(self._mark_codes_seen, user_id, codes, seen_at)
+
     async def get_code_status(self, code: str) -> tuple[str, str] | None:
         return await asyncio.to_thread(self._get_code_status, code)
 
@@ -81,6 +96,13 @@ class Storage:
                 CREATE TABLE IF NOT EXISTS bot_state (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS user_code_views (
+                    user_id INTEGER NOT NULL,
+                    code TEXT NOT NULL,
+                    seen_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, code)
                 );
                 """
             )
@@ -221,6 +243,54 @@ class Storage:
             ).fetchall()
         return [MonthlyRow(**dict(row)) for row in rows]
 
+    def _get_unseen_monthly_rows(
+        self,
+        user_id: int,
+        now: datetime | None = None,
+    ) -> list[MonthlyRow]:
+        current = now or datetime.now(timezone.utc)
+        month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT redeem_codes.code, redeem_codes.status, redeem_codes.first_seen_at, redeem_codes.source_type
+                FROM redeem_codes
+                LEFT JOIN user_code_views
+                    ON user_code_views.code = redeem_codes.code
+                   AND user_code_views.user_id = ?
+                WHERE redeem_codes.first_seen_at >= ?
+                  AND redeem_codes.status = 'active'
+                  AND (
+                      user_code_views.seen_at IS NULL
+                      OR user_code_views.seen_at < redeem_codes.last_status_change_at
+                  )
+                ORDER BY redeem_codes.first_seen_at DESC
+                """,
+                (user_id, month_start.isoformat()),
+            ).fetchall()
+        return [MonthlyRow(**dict(row)) for row in rows]
+
+    def _mark_codes_seen(
+        self,
+        user_id: int,
+        codes: list[str],
+        seen_at: datetime | None = None,
+    ) -> None:
+        valid_codes = [code for code in codes if is_probable_code(code)]
+        if not valid_codes:
+            return
+
+        marked_at = (seen_at or datetime.now(timezone.utc)).isoformat()
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO user_code_views(user_id, code, seen_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id, code) DO UPDATE SET seen_at = excluded.seen_at
+                """,
+                [(user_id, code, marked_at) for code in valid_codes],
+            )
+
     def _get_code_status(self, code: str) -> tuple[str, str] | None:
         if not is_probable_code(code):
             return None
@@ -258,5 +328,9 @@ class Storage:
         )
         conn.execute(
             f"DELETE FROM observations WHERE code IN ({placeholders})",
+            invalid_codes,
+        )
+        conn.execute(
+            f"DELETE FROM user_code_views WHERE code IN ({placeholders})",
             invalid_codes,
         )

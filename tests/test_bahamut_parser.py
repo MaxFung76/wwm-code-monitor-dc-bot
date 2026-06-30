@@ -181,3 +181,48 @@ def test_storage_initialize_removes_numeric_only_codes(tmp_path: Path) -> None:
     asyncio.run(storage.initialize())
 
     assert asyncio.run(storage.get_code_status("1182577423678713917")) is None
+
+
+def test_storage_hides_seen_monthly_codes_per_user(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "codes.db")
+
+    import asyncio
+
+    asyncio.run(storage.initialize())
+
+    asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="UNSEEN123", status=CodeStatus.ACTIVE, note="first active")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+
+    first_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))
+    assert [row.code for row in first_rows] == ["UNSEEN123"]
+
+    asyncio.run(storage.mark_codes_seen(user_id=1001, codes=["UNSEEN123"]))
+
+    second_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))
+    assert second_rows == []
+
+    other_user_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=2002))
+    assert [row.code for row in other_user_rows] == ["UNSEEN123"]
+
+    asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="UNSEEN123", status=CodeStatus.EXPIRED, note="expired")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+    asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="UNSEEN123", status=CodeStatus.ACTIVE, note="active again")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+
+    reactivated_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))
+    assert [row.code for row in reactivated_rows] == ["UNSEEN123"]

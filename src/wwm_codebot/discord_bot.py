@@ -128,7 +128,7 @@ class ControlPanelView(discord.ui.View):
         _: discord.ui.Button,
     ) -> None:
         await interaction.response.defer(ephemeral=True, thinking=True)
-        report = await self.bot.build_monthly_report()
+        report = await self.bot.build_monthly_report(interaction.user.id)
         await interaction.followup.send(report, ephemeral=True)
         await self.bot.repost_panel()
 
@@ -347,13 +347,16 @@ class RedeemCodeBot(commands.Bot):
         lines = [f"- `{item.code}`" for item in codes]
         await channel.send("\n".join([f"**{title}**", *lines]))
 
-    async def build_monthly_report(self) -> str:
-        rows = await self.storage.get_monthly_rows(now=datetime.now(timezone.utc))
-        rows = [row for row in rows if row.status == CodeStatus.ACTIVE]
+    async def build_monthly_report(self, user_id: int) -> str:
+        rows = await self.storage.get_unseen_monthly_rows(
+            user_id,
+            now=datetime.now(timezone.utc),
+        )
         if not rows:
-            return "本月目前沒有有效的兌換碼。"
+            return "本月目前沒有尚未看過的有效兌換碼。"
 
         lines = ["本月已收錄兌換碼："]
+        displayed_codes: list[str] = []
         hidden_count = 0
         limit = 1900
         for index, row in enumerate(rows):
@@ -363,9 +366,13 @@ class RedeemCodeBot(commands.Bot):
                 hidden_count = len(rows) - index
                 break
             lines.append(line)
+            displayed_codes.append(row.code)
 
         if hidden_count:
             lines.append(f"- 其餘 {hidden_count} 筆未顯示")
+
+        if displayed_codes:
+            await self.storage.mark_codes_seen(user_id, displayed_codes)
 
         return "\n".join(lines)
 
