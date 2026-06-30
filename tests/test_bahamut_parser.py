@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from wwm_codebot.bahamut import parse_bahamut_codes
+import pytest
+
+from wwm_codebot.bahamut import _ensure_article_html, parse_bahamut_codes
 from wwm_codebot.models import CodeStatus
 from wwm_codebot.storage import Storage
 
@@ -91,3 +93,15 @@ def test_storage_only_notifies_new_active_codes(tmp_path: Path) -> None:
         )
     )
     assert third.new_active_codes == []
+
+
+def test_ensure_article_html_rejects_maintenance_page() -> None:
+    html = """
+    <html>
+      <head><title>巴哈姆特電玩資訊站 - 系統維修中</title></head>
+      <body>系統維修中，請稍後再試。</body>
+    </html>
+    """
+
+    with pytest.raises(RuntimeError, match="maintenance"):
+        _ensure_article_html(html, source="test")

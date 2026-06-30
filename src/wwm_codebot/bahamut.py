@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -17,6 +18,12 @@ ARTICLE_SELECTORS = (
     "#article-content",
     "[itemprop='articleBody']",
 )
+MAINTENANCE_MARKERS = (
+    "系統維修中",
+    "維護中",
+    "service unavailable",
+)
+BROWSER_ATTEMPTS = 3
 
 
 def extract_codes_from_text(text: str) -> list[str]:
@@ -73,10 +80,12 @@ class BahamutMonitor:
     async def fetch_snapshot(self) -> CodeSnapshot:
         try:
             html = await self._fetch_html_with_httpx()
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code != 403:
-                raise
-            print("Bahamut returned 403 for httpx, retrying with browser.", flush=True)
+        except (httpx.HTTPStatusError, RuntimeError) as exc:
+            print(
+                "Bahamut httpx fetch failed, retrying with browser: "
+                f"{type(exc).__name__} {exc}",
+                flush=True,
+            )
             html = await self._fetch_html_with_browser()
         return parse_bahamut_codes(html, self.forum_url)
 
@@ -101,7 +110,7 @@ class BahamutMonitor:
         ) as client:
             response = await client.get(self.forum_url)
             response.raise_for_status()
-        return response.text
+        return _ensure_article_html(response.text, source="httpx")
 
     async def _fetch_html_with_browser(self) -> str:
         try:
@@ -112,7 +121,7 @@ class BahamutMonitor:
 
         headers = self._build_headers()
         timeout_ms = self.timeout_seconds * 1000
-        selector = ", ".join(ARTICLE_SELECTORS)
+        selector = ARTICLE_SELECTORS[0]
 
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(
@@ -128,31 +137,95 @@ class BahamutMonitor:
                 user_agent=headers["User-Agent"],
                 locale="zh-TW",
                 extra_http_headers={
+                    "Accept": headers["Accept"],
                     "Accept-Language": headers["Accept-Language"],
+                    "Referer": headers["Referer"],
                 },
                 viewport={"width": 1440, "height": 900},
             )
-            page = await context.new_page()
             try:
-                await page.goto(
-                    self.forum_url,
-                    wait_until="domcontentloaded",
-                    timeout=timeout_ms,
+                await context.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'webdriver', {
+                      get: () => undefined,
+                    });
+                    """
                 )
-                await page.locator(selector).first.wait_for(
-                    state="attached",
-                    timeout=timeout_ms,
-                )
-                return await page.content()
-            except PlaywrightTimeoutError as exc:
-                title = await page.title()
-                raise RuntimeError(
-                    "browser fetch did not reach Bahamut article content "
-                    f"(title={title!r})."
-                ) from exc
+                last_error: Exception | None = None
+                for attempt in range(1, BROWSER_ATTEMPTS + 1):
+                    page = await context.new_page()
+                    try:
+                        html = await self._fetch_browser_attempt(
+                            page=page,
+                            selector=selector,
+                            timeout_ms=timeout_ms,
+                            attempt=attempt,
+                        )
+                        return html
+                    except (PlaywrightTimeoutError, RuntimeError) as exc:
+                        last_error = exc
+                        print(
+                            "Bahamut browser attempt failed: "
+                            f"attempt={attempt}/{BROWSER_ATTEMPTS} "
+                            f"{type(exc).__name__} {exc}",
+                            flush=True,
+                        )
+                        if attempt < BROWSER_ATTEMPTS:
+                            await asyncio.sleep(min(2 * attempt, 5))
+                    finally:
+                        await page.close()
+                if last_error is not None:
+                    raise RuntimeError(f"browser fetch failed after retries: {last_error}") from last_error
+                raise RuntimeError("browser fetch failed without a captured exception.")
             finally:
                 await context.close()
                 await browser.close()
+
+    async def _fetch_browser_attempt(
+        self,
+        *,
+        page,
+        selector: str,
+        timeout_ms: int,
+        attempt: int,
+    ) -> str:
+        from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+        await page.goto(
+            self.forum_url,
+            wait_until="domcontentloaded",
+            timeout=timeout_ms,
+        )
+        await page.wait_for_timeout(1500)
+
+        # Bahamut occasionally returns a maintenance/interstitial page first.
+        # Reload once inside the same attempt before declaring failure.
+        for phase in ("initial", "reload"):
+            html = await page.content()
+            try:
+                return _ensure_article_html(
+                    html,
+                    source=f"browser:{phase}:attempt={attempt}",
+                )
+            except RuntimeError as exc:
+                if phase == "reload":
+                    raise exc
+                try:
+                    await page.locator(selector).first.wait_for(
+                        state="attached",
+                        timeout=min(timeout_ms, 4000),
+                    )
+                    html = await page.content()
+                    return _ensure_article_html(
+                        html,
+                        source=f"browser:selector:attempt={attempt}",
+                    )
+                except (PlaywrightTimeoutError, RuntimeError):
+                    await page.reload(
+                        wait_until="domcontentloaded",
+                        timeout=timeout_ms,
+                    )
+                    await page.wait_for_timeout(2000)
 
 
 def _find_article_root(soup: BeautifulSoup) -> Tag:
@@ -181,3 +254,21 @@ def _iter_ancestors(node: NavigableString) -> Iterable[Tag]:
     while isinstance(parent, Tag):
         yield parent
         parent = parent.parent
+
+
+def _ensure_article_html(html: str, *, source: str) -> str:
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    title_lower = title.lower()
+    if any(marker in title_lower for marker in MAINTENANCE_MARKERS):
+        raise RuntimeError(f"{source} received maintenance page (title={title!r}).")
+
+    body_text = soup.get_text(" ", strip=True)
+    if any(marker in body_text.lower() for marker in MAINTENANCE_MARKERS):
+        raise RuntimeError(f"{source} received maintenance content.")
+
+    for selector in ARTICLE_SELECTORS:
+        if soup.select_one(selector):
+            return html
+
+    raise RuntimeError(f"{source} did not reach Bahamut article content (title={title!r}).")
