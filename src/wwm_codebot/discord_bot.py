@@ -127,12 +127,15 @@ class RedeemCodeBot(commands.Bot):
         )
         self.panel_lock = asyncio.Lock()
         self._initial_sync_done = False
+        self._resolved_channel_logged = False
 
     async def setup_hook(self) -> None:
         await self.storage.initialize()
         self.add_view(ControlPanelView(self))
         self.monitor_forum.change_interval(minutes=self.settings.monitor_interval_minutes)
         self.monitor_forum.start()
+        self.ensure_panel.change_interval(minutes=5)
+        self.ensure_panel.start()
 
     async def on_ready(self) -> None:
         print(
@@ -151,6 +154,7 @@ class RedeemCodeBot(commands.Bot):
         if message.author.bot:
             return
         if message.channel.id != self.settings.discord_channel_id:
+            await self.process_commands(message)
             return
 
         codes = extract_codes_from_text(message.content)
@@ -170,6 +174,7 @@ class RedeemCodeBot(commands.Bot):
                 )
 
         await self.repost_panel()
+        await self.process_commands(message)
 
     @tasks.loop(minutes=10)
     async def monitor_forum(self) -> None:
@@ -243,6 +248,10 @@ class RedeemCodeBot(commands.Bot):
                     await old_message.delete()
 
             try:
+                print(
+                    f"Posting panel to channel {channel.id}",
+                    flush=True,
+                )
                 panel_message = await channel.send(
                     "\n".join(
                         [
@@ -255,15 +264,42 @@ class RedeemCodeBot(commands.Bot):
                     view=ControlPanelView(self),
                 )
                 await self.storage.set_state(PANEL_STATE_KEY, str(panel_message.id))
+                print(f"Panel posted: message_id={panel_message.id}", flush=True)
             except Exception as exc:
                 print(
                     f"Failed to send panel message: {type(exc).__name__} {exc}",
                     flush=True,
                 )
 
+    @tasks.loop(minutes=5)
+    async def ensure_panel(self) -> None:
+        channel = await self.resolve_channel()
+        if channel is None:
+            return
+
+        current_id = await self.storage.get_state(PANEL_STATE_KEY)
+        if not current_id:
+            await self.repost_panel()
+            return
+
+        try:
+            await channel.fetch_message(int(current_id))
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            await self.repost_panel()
+
+    @ensure_panel.before_loop
+    async def before_ensure_panel(self) -> None:
+        await self.wait_until_ready()
+
     async def resolve_channel(self) -> discord.TextChannel | discord.Thread | None:
         channel = self.get_channel(self.settings.discord_channel_id)
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
+            if not self._resolved_channel_logged:
+                self._resolved_channel_logged = True
+                print(
+                    f"Resolved channel: {channel} ({channel.id})",
+                    flush=True,
+                )
             return channel
 
         try:
@@ -277,6 +313,12 @@ class RedeemCodeBot(commands.Bot):
             return None
 
         if isinstance(fetched, (discord.TextChannel, discord.Thread)):
+            if not self._resolved_channel_logged:
+                self._resolved_channel_logged = True
+                print(
+                    f"Resolved channel: {fetched} ({fetched.id})",
+                    flush=True,
+                )
             return fetched
 
         print(
