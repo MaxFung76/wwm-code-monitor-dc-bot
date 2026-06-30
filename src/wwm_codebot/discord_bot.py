@@ -5,6 +5,7 @@ import contextlib
 from datetime import datetime, timezone
 
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 
 from .bahamut import BahamutMonitor, extract_codes_from_text
@@ -13,6 +14,7 @@ from .models import CodeStatus, RedeemCode
 from .storage import Storage
 
 PANEL_STATE_KEY = "panel_message_id"
+PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 
 
 class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
@@ -136,6 +138,15 @@ class RedeemCodeBot(commands.Bot):
         self.monitor_forum.start()
         self.ensure_panel.change_interval(minutes=5)
         self.ensure_panel.start()
+        self.tree.add_command(
+            app_commands.Command(
+                name="setup_buttons",
+                description="在目前頻道重新發送兌換碼面板",
+                callback=self._setup_buttons,
+            )
+        )
+        if self.settings.discord_guild_id:
+            await self.tree.sync(guild=discord.Object(id=self.settings.discord_guild_id))
 
     async def on_ready(self) -> None:
         print(
@@ -150,10 +161,26 @@ class RedeemCodeBot(commands.Bot):
             except Exception as exc:
                 print(f"Failed to post panel: {type(exc).__name__} {exc}", flush=True)
 
+    async def _setup_buttons(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            if interaction.channel_id is None:
+                await interaction.followup.send("無法取得頻道資訊。", ephemeral=True)
+                return
+            await self.repost_panel(channel_id=interaction.channel_id)
+            await interaction.followup.send("已重新發送面板。", ephemeral=True)
+        except Exception as exc:
+            print(f"setup_buttons error: {type(exc).__name__} {exc}", flush=True)
+            await interaction.followup.send(
+                f"發送失敗：{type(exc).__name__} {exc}",
+                ephemeral=True,
+            )
+
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot:
             return
-        if message.channel.id != self.settings.discord_channel_id:
+        listen_channel_id = await self.get_panel_channel_id()
+        if message.channel.id != listen_channel_id:
             await self.process_commands(message)
             return
 
@@ -231,20 +258,29 @@ class RedeemCodeBot(commands.Bot):
 
         return "\n".join(lines)
 
-    async def repost_panel(self) -> None:
+    async def repost_panel(self, *, channel_id: int | None = None) -> None:
         async with self.panel_lock:
-            channel = await self.resolve_channel()
+            target_channel_id = channel_id or await self.get_panel_channel_id()
+            channel = await self.resolve_channel(target_channel_id)
             if channel is None:
                 print(
-                    f"Panel skipped: channel {self.settings.discord_channel_id} not resolved",
+                    f"Panel skipped: channel {target_channel_id} not resolved",
                     flush=True,
                 )
                 return
 
             current_id = await self.storage.get_state(PANEL_STATE_KEY)
+            current_channel_id_raw = await self.storage.get_state(PANEL_CHANNEL_STATE_KEY)
+            current_channel_id = int(current_channel_id_raw) if current_channel_id_raw else None
             if current_id:
                 with contextlib.suppress(discord.NotFound, discord.Forbidden, discord.HTTPException):
-                    old_message = await channel.fetch_message(int(current_id))
+                    if current_channel_id and current_channel_id != channel.id:
+                        old_channel = await self.resolve_channel(current_channel_id)
+                        if old_channel is not None:
+                            old_message = await old_channel.fetch_message(int(current_id))
+                            await old_message.delete()
+                    else:
+                        old_message = await channel.fetch_message(int(current_id))
                     await old_message.delete()
 
             try:
@@ -264,6 +300,7 @@ class RedeemCodeBot(commands.Bot):
                     view=ControlPanelView(self),
                 )
                 await self.storage.set_state(PANEL_STATE_KEY, str(panel_message.id))
+                await self.storage.set_state(PANEL_CHANNEL_STATE_KEY, str(channel.id))
                 print(f"Panel posted: message_id={panel_message.id}", flush=True)
             except Exception as exc:
                 print(
@@ -273,26 +310,45 @@ class RedeemCodeBot(commands.Bot):
 
     @tasks.loop(minutes=5)
     async def ensure_panel(self) -> None:
-        channel = await self.resolve_channel()
+        channel_id = await self.get_panel_channel_id()
+        channel = await self.resolve_channel(channel_id)
         if channel is None:
             return
 
         current_id = await self.storage.get_state(PANEL_STATE_KEY)
+        current_channel_id_raw = await self.storage.get_state(PANEL_CHANNEL_STATE_KEY)
+        current_channel_id = int(current_channel_id_raw) if current_channel_id_raw else channel.id
         if not current_id:
-            await self.repost_panel()
+            await self.repost_panel(channel_id=channel.id)
             return
 
         try:
-            await channel.fetch_message(int(current_id))
+            if current_channel_id != channel.id:
+                old_channel = await self.resolve_channel(current_channel_id)
+                if old_channel is None:
+                    await self.repost_panel(channel_id=channel.id)
+                    return
+                await old_channel.fetch_message(int(current_id))
+            else:
+                await channel.fetch_message(int(current_id))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
-            await self.repost_panel()
+            await self.repost_panel(channel_id=channel.id)
 
     @ensure_panel.before_loop
     async def before_ensure_panel(self) -> None:
         await self.wait_until_ready()
 
-    async def resolve_channel(self) -> discord.TextChannel | discord.Thread | None:
-        channel = self.get_channel(self.settings.discord_channel_id)
+    async def get_panel_channel_id(self) -> int:
+        stored = await self.storage.get_state(PANEL_CHANNEL_STATE_KEY)
+        if stored:
+            try:
+                return int(stored)
+            except ValueError:
+                pass
+        return self.settings.discord_channel_id
+
+    async def resolve_channel(self, channel_id: int) -> discord.TextChannel | discord.Thread | None:
+        channel = self.get_channel(channel_id)
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             if not self._resolved_channel_logged:
                 self._resolved_channel_logged = True
@@ -303,11 +359,11 @@ class RedeemCodeBot(commands.Bot):
             return channel
 
         try:
-            fetched = await self.fetch_channel(self.settings.discord_channel_id)
+            fetched = await self.fetch_channel(channel_id)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException) as exc:
             print(
                 "Failed to fetch channel "
-                f"{self.settings.discord_channel_id}: {type(exc).__name__} {exc}",
+                f"{channel_id}: {type(exc).__name__} {exc}",
                 flush=True,
             )
             return None
@@ -322,7 +378,7 @@ class RedeemCodeBot(commands.Bot):
             return fetched
 
         print(
-            f"Unsupported channel type for {self.settings.discord_channel_id}: {type(fetched)}",
+            f"Unsupported channel type for {channel_id}: {type(fetched)}",
             flush=True,
         )
         return None
