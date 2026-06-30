@@ -2,6 +2,9 @@
 
 這個專案會定期監控巴哈姆特指定文章，抓取兌換碼並區分有效/過期狀態，然後同步到 Discord 頻道與 SQLite。
 
+- 授權條款： [LICENSE](file:///d:/Trae/WWM-DC-BOT/LICENSE)
+- 安全通報： [SECURITY.md](file:///d:/Trae/WWM-DC-BOT/SECURITY.md)
+
 目前系統已同時支援兩種資料來源模式：
 
 - `live_bahamut`：Bot 直接從 VPS 抓巴哈文章
