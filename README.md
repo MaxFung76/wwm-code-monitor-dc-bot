@@ -273,7 +273,12 @@ BRANCH=main ./deploy.sh
 
 之後再交給 GitHub Actions 自動部署。
 
-### 11. 部署注意事項
+### 11. 常用指令
+
+- `/setup_buttons`：在目前頻道重新發送面板，並記住該頻道作為面板/監聽頻道
+- `/sync_now`：立刻同步巴哈文章並更新狀態（可選填特定 code 來檢查 status）
+
+### 12. 部署注意事項
 
 - 這是 Discord Bot，不需要開放 HTTP port。
 - 請確認 VPS 出站網路可連到 `discord.com` 與 `forum.gamer.com.tw`。

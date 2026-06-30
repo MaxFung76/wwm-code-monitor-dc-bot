@@ -47,6 +47,9 @@ class Storage:
     async def get_monthly_rows(self, now: datetime | None = None) -> list[MonthlyRow]:
         return await asyncio.to_thread(self._get_monthly_rows, now)
 
+    async def get_code_status(self, code: str) -> tuple[str, str] | None:
+        return await asyncio.to_thread(self._get_code_status, code)
+
     def _initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
@@ -211,6 +214,20 @@ class Storage:
                 (month_start.isoformat(),),
             ).fetchall()
         return [MonthlyRow(**dict(row)) for row in rows]
+
+    def _get_code_status(self, code: str) -> tuple[str, str] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT status, source_type
+                FROM redeem_codes
+                WHERE code = ?
+                """,
+                (code,),
+            ).fetchone()
+        if row is None:
+            return None
+        return (str(row["status"]), str(row["source_type"]))
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.database_path)

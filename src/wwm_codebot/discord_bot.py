@@ -145,6 +145,13 @@ class RedeemCodeBot(commands.Bot):
                 callback=self._setup_buttons,
             )
         )
+        self.tree.add_command(
+            app_commands.Command(
+                name="sync_now",
+                description="立刻同步巴哈文章並更新兌換碼狀態（可選填 code）",
+                callback=self._sync_now,
+            )
+        )
         if self.settings.discord_guild_id:
             await self.tree.sync(guild=discord.Object(id=self.settings.discord_guild_id))
 
@@ -173,6 +180,48 @@ class RedeemCodeBot(commands.Bot):
             print(f"setup_buttons error: {type(exc).__name__} {exc}", flush=True)
             await interaction.followup.send(
                 f"發送失敗：{type(exc).__name__} {exc}",
+                ephemeral=True,
+            )
+
+    async def _sync_now(self, interaction: discord.Interaction, code: str | None = None) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            snapshot = await self.monitor.fetch_snapshot()
+            result = await self.storage.reconcile_codes(
+                snapshot.codes,
+                source_url=snapshot.source_url,
+                source_type="monitor",
+            )
+
+            active_count = sum(1 for item in snapshot.codes if item.status == CodeStatus.ACTIVE)
+            expired_count = sum(1 for item in snapshot.codes if item.status == CodeStatus.EXPIRED)
+
+            lines = [
+                "已同步巴哈文章。",
+                f"- active: {active_count}",
+                f"- expired: {expired_count}",
+                f"- new_active: {len(result.new_active_codes)}",
+                f"- changed: {len(result.changed_codes)}",
+            ]
+
+            if code:
+                target = next((item for item in snapshot.codes if item.code == code), None)
+                if target is None:
+                    lines.append(f"- snapshot[{code}]: not found")
+                else:
+                    lines.append(f"- snapshot[{code}]: {target.status.value}")
+
+                db_row = await self.storage.get_code_status(code)
+                if db_row is None:
+                    lines.append(f"- db[{code}]: not found")
+                else:
+                    lines.append(f"- db[{code}]: {db_row[0]} ({db_row[1]})")
+
+            await interaction.followup.send("\n".join(lines), ephemeral=True)
+        except Exception as exc:
+            print(f"sync_now error: {type(exc).__name__} {exc}", flush=True)
+            await interaction.followup.send(
+                f"同步失敗：{type(exc).__name__} {exc}",
                 ephemeral=True,
             )
 
