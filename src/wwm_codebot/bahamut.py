@@ -98,6 +98,8 @@ class BahamutMonitor:
             ),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "zh-TW,zh;q=0.9",
+            "Referer": "https://forum.gamer.com.tw/",
+            "Origin": "https://forum.gamer.com.tw",
         }
 
     async def _fetch_html_with_httpx(self) -> str:
