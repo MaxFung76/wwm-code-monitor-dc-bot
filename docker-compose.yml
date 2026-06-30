@@ -1,0 +1,38 @@
+services:
+  wwm-codebot:
+    image: ${IMAGE_NAME:-wwm-codebot:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wwm-codebot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /app/data/redeem_codes.db
+    volumes:
+      - ./data:/app/data
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: wwm-codebot-watchtower
+    restart: unless-stopped
+    command:
+      - --cleanup
+      - --interval
+      - "300"
+      - --label-enable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

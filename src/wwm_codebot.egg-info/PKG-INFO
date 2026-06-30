@@ -1,0 +1,97 @@
+Metadata-Version: 2.4
+Name: wwm-codebot
+Version: 0.1.0
+Summary: Bahamut redeem code monitor and Discord bot for WWM.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: beautifulsoup4>=4.12.3
+Requires-Dist: discord.py>=2.5.2
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: python-dotenv>=1.1.1
+Provides-Extra: dev
+Requires-Dist: pytest>=8.4.1; extra == "dev"
+
+# WWM Discord 兌換碼監控 Bot
+
+這個專案會定期監控巴哈姆特指定文章，抓取兌換碼並區分有效/過期狀態，然後同步到 Discord 頻道與 SQLite。
+
+## 已完成功能
+
+- 監控巴哈文章 `snA=388`
+- 辨識 `<strike>`、`<s>`、`<del>` 內的過期碼
+- 將結果寫入 SQLite，並只通知新出現的有效碼
+- Discord 面板按鈕：
+  - `新增兌換碼`
+  - `查詢當月列表`
+- 頻道文字訊息監聽，自動抓取成員貼上的代碼
+- 自動置底：每次互動或新訊息後刪除舊面板並重發到最下方
+
+## 專案結構
+
+```text
+src/wwm_codebot/
+  bahamut.py       # 巴哈文章抓取與 HTML 解析
+  config.py        # 環境變數設定
+  discord_bot.py   # Discord Bot、按鈕面板、訊息監聽
+  main.py          # 啟動入口
+  models.py        # 資料模型
+  storage.py       # SQLite 狀態同步與查詢
+tests/
+  test_bahamut_parser.py
+```
+
+## 安裝
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .[dev]
+```
+
+## 設定
+
+1. 複製 `.env.example` 為 `.env`
+2. 填入以下內容：
+
+```env
+DISCORD_TOKEN=your-discord-bot-token
+DISCORD_CHANNEL_ID=123456789012345678
+FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+DATABASE_PATH=data/redeem_codes.db
+MONITOR_INTERVAL_MINUTES=10
+REQUEST_TIMEOUT_SECONDS=20
+```
+
+## Discord Bot 權限
+
+請在 Discord Developer Portal 啟用：
+
+- `MESSAGE CONTENT INTENT`
+
+Bot 進伺服器時至少要有：
+
+- 讀取訊息
+- 發送訊息
+- 管理訊息
+- 讀取訊息歷史
+
+`管理訊息` 用於自動刪除舊面板並重新發送。
+
+## 啟動
+
+```bash
+python -m wwm_codebot.main
+```
+
+## 測試
+
+```bash
+pytest
+```
+
+## 後續可擴充
+
+- 改用 Supabase 或 GitHub Issue 做狀態同步
+- 加入管理員限定按鈕權限
+- 對手動新增與監控新增分開頻道通知
+- 增加 slash commands 與排程健康檢查

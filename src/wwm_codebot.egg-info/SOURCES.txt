@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/wwm_codebot/__init__.py
+src/wwm_codebot/bahamut.py
+src/wwm_codebot/config.py
+src/wwm_codebot/discord_bot.py
+src/wwm_codebot/main.py
+src/wwm_codebot/models.py
+src/wwm_codebot/storage.py
+src/wwm_codebot.egg-info/PKG-INFO
+src/wwm_codebot.egg-info/SOURCES.txt
+src/wwm_codebot.egg-info/dependency_links.txt
+src/wwm_codebot.egg-info/requires.txt
+src/wwm_codebot.egg-info/top_level.txt
+tests/test_bahamut_parser.py
