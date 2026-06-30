@@ -31,7 +31,7 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
     async def on_submit(self, interaction: discord.Interaction) -> None:
         codes = [
             RedeemCode(code=value, status=CodeStatus.ACTIVE, note="added from modal")
-            for value in extract_codes_from_text(str(self.codes_input))
+            for value in extract_codes_from_text(self.codes_input.value)
         ]
 
         if not codes:
@@ -55,6 +55,13 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
             ephemeral=True,
         )
         await self.bot.repost_panel()
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        print(f"Modal error: {type(error).__name__} {error}")
+        if interaction.response.is_done():
+            await interaction.followup.send("操作失敗，請稍後再試。", ephemeral=True)
+        else:
+            await interaction.response.send_message("操作失敗，請稍後再試。", ephemeral=True)
 
 
 class ControlPanelView(discord.ui.View):
@@ -87,6 +94,18 @@ class ControlPanelView(discord.ui.View):
         report = await self.bot.build_monthly_report()
         await interaction.response.send_message(report, ephemeral=True)
         await self.bot.repost_panel()
+
+    async def on_error(
+        self,
+        interaction: discord.Interaction,
+        error: Exception,
+        _: discord.ui.Item[discord.ui.View],
+    ) -> None:
+        print(f"View error: {type(error).__name__} {error}")
+        if interaction.response.is_done():
+            await interaction.followup.send("操作失敗，請稍後再試。", ephemeral=True)
+        else:
+            await interaction.response.send_message("操作失敗，請稍後再試。", ephemeral=True)
 
 
 class RedeemCodeBot(commands.Bot):
