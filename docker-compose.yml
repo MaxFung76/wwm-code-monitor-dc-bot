@@ -24,6 +24,8 @@ services:
     image: containrrr/watchtower:latest
     container_name: wwm-codebot-watchtower
     restart: unless-stopped
+    environment:
+      DOCKER_API_VERSION: "1.40"
     command:
       - --cleanup
       - --interval
@@ -31,6 +33,7 @@ services:
       - --label-enable
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./.docker/config.json:/config.json:ro
     logging:
       driver: json-file
       options:

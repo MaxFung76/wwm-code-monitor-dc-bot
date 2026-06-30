@@ -4,5 +4,6 @@ __pycache__
 .pytest_cache
 tests
 data
+.docker
 .env
 *.pyc

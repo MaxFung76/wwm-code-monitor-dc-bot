@@ -17,6 +17,39 @@ PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 
 
+async def send_interaction_message(
+    interaction: discord.Interaction,
+    message: str,
+    *,
+    ephemeral: bool = True,
+) -> None:
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=ephemeral)
+    else:
+        await interaction.response.send_message(message, ephemeral=ephemeral)
+
+
+class RedeemCommandTree(app_commands.CommandTree["RedeemCodeBot"]):
+    async def on_error(
+        self,
+        interaction: discord.Interaction["RedeemCodeBot"],
+        error: app_commands.AppCommandError,
+        /,
+    ) -> None:
+        actual_error = getattr(error, "original", error)
+        print(
+            "App command error: "
+            f"{type(actual_error).__name__} {actual_error}",
+            flush=True,
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await send_interaction_message(
+                interaction,
+                f"指令執行失敗：{type(actual_error).__name__} {actual_error}",
+                ephemeral=True,
+            )
+
+
 class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
     codes_input = discord.ui.TextInput(
         label="請輸入兌換碼",
@@ -62,10 +95,7 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
 
     async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
         print(f"Modal error: {type(error).__name__} {error}", flush=True)
-        if interaction.response.is_done():
-            await interaction.followup.send("操作失敗，請稍後再試。", ephemeral=True)
-        else:
-            await interaction.response.send_message("操作失敗，請稍後再試。", ephemeral=True)
+        await send_interaction_message(interaction, "操作失敗，請稍後再試。", ephemeral=True)
 
 
 class ControlPanelView(discord.ui.View):
@@ -107,10 +137,7 @@ class ControlPanelView(discord.ui.View):
         _: discord.ui.Item[discord.ui.View],
     ) -> None:
         print(f"View error: {type(error).__name__} {error}", flush=True)
-        if interaction.response.is_done():
-            await interaction.followup.send("操作失敗，請稍後再試。", ephemeral=True)
-        else:
-            await interaction.response.send_message("操作失敗，請稍後再試。", ephemeral=True)
+        await send_interaction_message(interaction, "操作失敗，請稍後再試。", ephemeral=True)
 
 
 class RedeemCodeBot(commands.Bot):
@@ -120,7 +147,11 @@ class RedeemCodeBot(commands.Bot):
         intents.messages = True
         intents.message_content = True
 
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(
+            command_prefix="!",
+            intents=intents,
+            tree_cls=RedeemCommandTree,
+        )
         self.settings = settings
         self.storage = storage
         self.monitor = BahamutMonitor(
@@ -183,6 +214,10 @@ class RedeemCodeBot(commands.Bot):
                 print(f"Failed to post panel: {type(exc).__name__} {exc}", flush=True)
 
     async def _setup_buttons(self, interaction: discord.Interaction) -> None:
+        print(
+            f"/setup_buttons invoked by user={interaction.user.id} channel={interaction.channel_id}",
+            flush=True,
+        )
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             if interaction.channel_id is None:
@@ -198,6 +233,10 @@ class RedeemCodeBot(commands.Bot):
             )
 
     async def _sync_now(self, interaction: discord.Interaction, code: str | None = None) -> None:
+        print(
+            f"/sync_now invoked by user={interaction.user.id} channel={interaction.channel_id} code={code!r}",
+            flush=True,
+        )
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             snapshot = await self.monitor.fetch_snapshot()
