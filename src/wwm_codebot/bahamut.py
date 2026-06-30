@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -77,8 +76,8 @@ class BahamutMonitor:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 403:
                 raise
-            print("Bahamut returned 403 for httpx, retrying with curl.", flush=True)
-            html = await self._fetch_html_with_curl()
+            print("Bahamut returned 403 for httpx, retrying with browser.", flush=True)
+            html = await self._fetch_html_with_browser()
         return parse_bahamut_codes(html, self.forum_url)
 
     def _build_headers(self) -> dict[str, str]:
@@ -104,48 +103,56 @@ class BahamutMonitor:
             response.raise_for_status()
         return response.text
 
-    async def _fetch_html_with_curl(self) -> str:
+    async def _fetch_html_with_browser(self) -> str:
+        try:
+            from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise RuntimeError("playwright is not installed in the runtime environment.") from exc
+
         headers = self._build_headers()
-        command = [
-            "curl",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--fail",
-            "--max-time",
-            str(self.timeout_seconds),
-            self.forum_url,
-            "-A",
-            headers["User-Agent"],
-            "-H",
-            f"Accept: {headers['Accept']}",
-            "-H",
-            f"Accept-Language: {headers['Accept-Language']}",
-        ]
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        timeout_ms = self.timeout_seconds * 1000
+        selector = ", ".join(ARTICLE_SELECTORS)
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-blink-features=AutomationControlled",
+                ],
             )
-        except FileNotFoundError as exc:
-            raise RuntimeError("curl is not installed in the runtime environment.") from exc
-
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=self.timeout_seconds + 2,
+            context = await browser.new_context(
+                user_agent=headers["User-Agent"],
+                locale="zh-TW",
+                extra_http_headers={
+                    "Accept-Language": headers["Accept-Language"],
+                },
+                viewport={"width": 1440, "height": 900},
             )
-        except asyncio.TimeoutError as exc:
-            process.kill()
-            await process.communicate()
-            raise TimeoutError("curl request timed out.") from exc
-
-        if process.returncode != 0:
-            error_text = stderr.decode("utf-8", errors="ignore").strip()
-            raise RuntimeError(f"curl request failed: {error_text}")
-
-        return stdout.decode("utf-8", errors="ignore")
+            page = await context.new_page()
+            try:
+                await page.goto(
+                    self.forum_url,
+                    wait_until="domcontentloaded",
+                    timeout=timeout_ms,
+                )
+                await page.locator(selector).first.wait_for(
+                    state="attached",
+                    timeout=timeout_ms,
+                )
+                return await page.content()
+            except PlaywrightTimeoutError as exc:
+                title = await page.title()
+                raise RuntimeError(
+                    "browser fetch did not reach Bahamut article content "
+                    f"(title={title!r})."
+                ) from exc
+            finally:
+                await context.close()
+                await browser.close()
 
 
 def _find_article_root(soup: BeautifulSoup) -> Tag:

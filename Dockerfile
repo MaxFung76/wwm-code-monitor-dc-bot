@@ -1,13 +1,10 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
-    rm -rf /var/lib/apt/lists/*
 
 RUN adduser --uid 1000 --disabled-password --gecos "" appuser
 
@@ -15,7 +12,9 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 
 RUN python -m pip install --upgrade pip && \
-    python -m pip install --no-cache-dir .
+    python -m pip install --no-cache-dir . && \
+    python -m playwright install --with-deps chromium && \
+    chmod -R 755 /ms-playwright
 
 RUN mkdir -p /app/data && chown -R appuser:appuser /app
 
