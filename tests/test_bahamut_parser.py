@@ -14,6 +14,9 @@ def test_parse_bahamut_codes_marks_active_and_expired() -> None:
       <div>TF37WR876K</div>
       <div><font color="unset">GOHOME123</font></div>
       <div>hh6am6c8rf<br>YYP4QNC7NQ</div>
+      <div>AC46AQH368</div>
+      <div><strike>AC46AQH368</strike></div>
+      <div>1182577423678713917</div>
       <div><strike>GOOSENEWS （3/31到期）</strike></div>
       <div><del>DEVLOG2601</del></div>
     </div>
@@ -27,8 +30,10 @@ def test_parse_bahamut_codes_marks_active_and_expired() -> None:
     assert status_map["GOHOME123"] == CodeStatus.ACTIVE
     assert status_map["hh6am6c8rf"] == CodeStatus.ACTIVE
     assert status_map["YYP4QNC7NQ"] == CodeStatus.ACTIVE
+    assert status_map["AC46AQH368"] == CodeStatus.EXPIRED
     assert status_map["GOOSENEWS"] == CodeStatus.EXPIRED
     assert status_map["DEVLOG2601"] == CodeStatus.EXPIRED
+    assert "1182577423678713917" not in status_map
 
 
 def test_storage_only_notifies_new_active_codes(tmp_path: Path) -> None:

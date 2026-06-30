@@ -24,6 +24,8 @@ def extract_codes_from_text(text: str) -> list[str]:
     seen: set[str] = set()
     codes: list[str] = []
     for token in tokens:
+        if not any(ch.isalpha() for ch in token):
+            continue
         if token not in seen:
             seen.add(token)
             codes.append(token)
@@ -49,7 +51,11 @@ def parse_bahamut_codes(html: str, source_url: str) -> CodeSnapshot:
         status = CodeStatus.EXPIRED if _is_expired(node) else CodeStatus.ACTIVE
         for code in codes:
             existing = collected.get(code)
-            if existing is None or existing.status == CodeStatus.EXPIRED and status == CodeStatus.ACTIVE:
+            if existing is None:
+                collected[code] = RedeemCode(code=code, status=status, note=str(node).strip())
+                continue
+
+            if existing.status == CodeStatus.ACTIVE and status == CodeStatus.EXPIRED:
                 collected[code] = RedeemCode(code=code, status=status, note=str(node).strip())
 
     return CodeSnapshot(
