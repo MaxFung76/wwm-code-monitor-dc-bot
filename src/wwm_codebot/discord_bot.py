@@ -353,13 +353,20 @@ class RedeemCodeBot(commands.Bot):
             return "本月目前沒有已收錄的兌換碼。"
 
         lines = ["本月已收錄兌換碼："]
-        for row in rows[:50]:
+        hidden_count = 0
+        limit = 1900
+        for index, row in enumerate(rows):
             status_label = "有效" if row.status == CodeStatus.ACTIVE else "過期"
             timestamp = row.first_seen_at.split("T", 1)[0]
-            lines.append(f"- `{row.code}` | {status_label} | {row.source_type} | {timestamp}")
+            line = f"- `{row.code}` | {status_label} | {row.source_type} | {timestamp}"
+            candidate = "\n".join([*lines, line])
+            if len(candidate) > limit:
+                hidden_count = len(rows) - index
+                break
+            lines.append(line)
 
-        if len(rows) > 50:
-            lines.append(f"- 其餘 {len(rows) - 50} 筆請直接查詢資料庫")
+        if hidden_count:
+            lines.append(f"- 其餘 {hidden_count} 筆未顯示")
 
         return "\n".join(lines)
 
