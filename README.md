@@ -193,6 +193,31 @@ docker compose logs -f watchtower
 - `watchtower` 最適合搭配 registry 映像模式，例如 `ghcr.io/...:latest`。
 - 如果你是走本機 build 模式，建議仍以 `./deploy.sh` 或 GitHub Actions SSH 部署為主。
 
+#### 搭配 GHCR（推薦的全自動更新模式）
+
+專案已提供 GHCR 映像建置 workflow： [.github/workflows/ghcr-image.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/ghcr-image.yml)
+
+當你 push 到 `main` 後，GitHub Actions 會建置並推送映像：
+
+- `ghcr.io/<owner>/<repo>:latest`
+- `ghcr.io/<owner>/<repo>:<sha>`
+
+VPS `.env` 建議設定：
+
+```env
+USE_REGISTRY_IMAGE=true
+IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
+```
+
+之後更新流程會變成：
+
+- push 到 GitHub 觸發 GHCR build/push
+- watchtower 自動拉新映像並重啟 `wwm-codebot`
+
+GitHub repo 設定需確認：
+
+- `Settings > Actions > General > Workflow permissions` 設定為 `Read and write permissions`
+
 ### 10. GitHub Actions 自動 SSH 部署
 
 已新增 workflow： [.github/workflows/deploy.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/deploy.yml)
@@ -257,6 +282,31 @@ docker compose up -d --build --remove-orphans
 ```
 
 如果你曾用 `sudo` 建立 `data/`，很容易變成 root 擁有，導致容器內無法寫入。
+
+#### watchtower: client version 1.25 is too old (Minimum supported API version is 1.40)
+
+這是 Docker API 版本協商問題（watchtower 透過 `/var/run/docker.sock` 呼叫 daemon 時，被要求至少使用 API 1.40）。
+
+已在 `docker-compose.yml` 的 `watchtower` 服務加入：
+
+```yaml
+environment:
+  DOCKER_API_VERSION: "1.40"
+```
+
+套用更新：
+
+```bash
+docker compose up -d --build --remove-orphans
+docker compose logs -f watchtower
+```
+
+如果仍然出現相同錯誤，請在 VPS 上提供以下輸出以定位是 daemon 類型或版本不相容：
+
+```bash
+docker version
+docker info
+```
 
 ## 測試
 
