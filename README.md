@@ -217,6 +217,7 @@ IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
 GitHub repo 設定需確認：
 
 - `Settings > Actions > General > Workflow permissions` 設定為 `Read and write permissions`
+- GHCR 映像名稱要求全小寫；本專案 workflow 會自動轉成小寫推送到 `ghcr.io/<owner>/<repo>:latest`
 
 ### 10. GitHub Actions 自動 SSH 部署
 
