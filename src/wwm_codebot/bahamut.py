@@ -71,16 +71,28 @@ class BahamutMonitor:
         self.timeout_seconds = timeout_seconds
 
     async def fetch_snapshot(self) -> CodeSnapshot:
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,image/apng,*/*;q=0.8"
+            ),
+            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Referer": "https://forum.gamer.com.tw/",
+            "Origin": "https://forum.gamer.com.tw",
+            "Upgrade-Insecure-Requests": "1",
+        }
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/126.0.0.0 Safari/537.36"
-                )
-            },
+            headers=headers,
             follow_redirects=True,
+            http2=True,
         ) as client:
             response = await client.get(self.forum_url)
             response.raise_for_status()
