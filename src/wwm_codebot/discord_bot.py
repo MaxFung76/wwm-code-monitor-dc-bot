@@ -111,7 +111,7 @@ class ControlPanelView(discord.ui.View):
 
     @discord.ui.button(
         label="新增兌換碼",
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.success,
         custom_id="panel:add-code",
     )
     async def add_code_button(
@@ -123,7 +123,7 @@ class ControlPanelView(discord.ui.View):
 
     @discord.ui.button(
         label="新兌換碼",
-        style=discord.ButtonStyle.secondary,
+        style=discord.ButtonStyle.primary,
         custom_id="panel:monthly-list",
     )
     async def monthly_list_button(
@@ -167,6 +167,33 @@ class RedeemCodeBot(commands.Bot):
         self.panel_lock = asyncio.Lock()
         self._initial_sync_done = False
         self._resolved_channel_logged = False
+
+    def build_panel_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="兌換碼面板",
+            description="集中管理兌換碼新增、查看與同步狀態。",
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(
+            name="快速操作",
+            value=(
+                "`新增兌換碼` 可手動補登代碼\n"
+                "`新兌換碼` 可查看你尚未查看的有效代碼"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="自動同步",
+            value="機器人會持續同步巴哈文章，並更新兌換碼狀態。",
+            inline=False,
+        )
+        embed.add_field(
+            name="自動收錄",
+            value="在此頻道或其討論串直接貼上兌換碼，機器人也會自動收錄。",
+            inline=False,
+        )
+        embed.set_footer(text="面板會自動置底，保持在最新訊息區域。")
+        return embed
 
     async def setup_hook(self) -> None:
         await self.storage.initialize()
@@ -362,9 +389,9 @@ class RedeemCodeBot(commands.Bot):
             now=datetime.now(timezone.utc),
         )
         if not rows:
-            return "目前沒有尚未看過的新兌換碼。"
+            return "目前沒有你尚未查看的新兌換碼。"
 
-        lines = ["尚未看過的新兌換碼："]
+        lines = ["你尚未查看的新兌換碼："]
         displayed_codes: list[str] = []
         hidden_count = 0
         limit = 1900
@@ -416,14 +443,7 @@ class RedeemCodeBot(commands.Bot):
                     flush=True,
                 )
                 panel_message = await channel.send(
-                    "\n".join(
-                        [
-                            "**兌換碼面板**",
-                            "- 使用按鈕可人工新增代碼或查看尚未看過的新兌換碼",
-                            "- 機器人會自動監控巴哈文章並同步新碼",
-                            "- 頻道內成員直接貼代碼，機器人也會自動收錄",
-                        ]
-                    ),
+                    embed=self.build_panel_embed(),
                     view=ControlPanelView(self),
                 )
                 await self.storage.set_state(PANEL_STATE_KEY, str(panel_message.id))
