@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from wwm_codebot.bahamut import _ensure_article_html, parse_bahamut_codes
+from wwm_codebot.discord_bot import channel_matches_target
 from wwm_codebot.models import CodeSnapshot, CodeStatus, RedeemCode
 from wwm_codebot.snapshot_io import snapshot_from_json, snapshot_to_json
 from wwm_codebot.storage import Storage
@@ -226,3 +227,9 @@ def test_storage_hides_seen_monthly_codes_per_user(tmp_path: Path) -> None:
 
     reactivated_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))
     assert [row.code for row in reactivated_rows] == ["UNSEEN123"]
+
+
+def test_channel_matches_target_supports_thread_parent() -> None:
+    assert channel_matches_target(channel_id=123, parent_id=None, target_id=123) is True
+    assert channel_matches_target(channel_id=456, parent_id=123, target_id=123) is True
+    assert channel_matches_target(channel_id=456, parent_id=999, target_id=123) is False

@@ -19,6 +19,10 @@ PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 
 
+def channel_matches_target(*, channel_id: int, parent_id: int | None, target_id: int) -> bool:
+    return channel_id == target_id or parent_id == target_id
+
+
 async def send_interaction_message(
     interaction: discord.Interaction,
     message: str,
@@ -285,7 +289,12 @@ class RedeemCodeBot(commands.Bot):
         if message.author.bot:
             return
         listen_channel_id = await self.get_panel_channel_id()
-        if message.channel.id != listen_channel_id:
+        parent_id = message.channel.parent_id if isinstance(message.channel, discord.Thread) else None
+        if not channel_matches_target(
+            channel_id=message.channel.id,
+            parent_id=parent_id,
+            target_id=listen_channel_id,
+        ):
             await self.process_commands(message)
             return
 
@@ -340,7 +349,7 @@ class RedeemCodeBot(commands.Bot):
                 )
 
     async def announce_new_codes(self, codes: list[RedeemCode], *, title: str) -> None:
-        channel = await self.resolve_channel()
+        channel = await self.resolve_channel(await self.get_panel_channel_id())
         if channel is None or not codes:
             return
 
