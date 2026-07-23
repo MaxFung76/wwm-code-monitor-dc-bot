@@ -361,15 +361,9 @@ class RedeemCodeBot(commands.Bot):
                 source_type="monitor",
             )
             if result.new_active_codes:
-                source_label = (
-                    "GitHub 快照同步"
-                    if mode == "github_snapshot"
-                    else "巴哈即時監控"
-                )
                 await self.announce_new_codes(
                     result.new_active_codes,
-                    title="巴哈監控發現新兌換碼",
-                    source_label=source_label,
+                    title="巴哈發現新兌換碼",
                 )
         except Exception as exc:
             channel = await self.resolve_channel(await self.get_panel_channel_id())
@@ -386,7 +380,6 @@ class RedeemCodeBot(commands.Bot):
         codes: list[RedeemCode],
         *,
         title: str,
-        source_label: str | None = None,
     ) -> None:
         channel = await self.resolve_channel(await self.get_panel_channel_id())
         if channel is None or not codes:
@@ -398,10 +391,6 @@ class RedeemCodeBot(commands.Bot):
             description=code_lines,
             color=discord.Color.green(),
         )
-        embed.add_field(name="本次新增", value=f"{len(codes)} 筆", inline=True)
-        if source_label:
-            embed.add_field(name="來源", value=source_label, inline=True)
-        embed.set_footer(text="只通知新發現的有效兌換碼")
         await channel.send(embed=embed)
 
     async def build_monthly_report(self, user_id: int) -> str:
