@@ -65,12 +65,14 @@ VPS Bot
 - 將結果寫入 SQLite，並只通知新出現的有效碼
 - Discord 面板按鈕：
   - `新增兌換碼`
-  - `查詢當月列表`
+  - `新兌換碼`
 - Slash Commands：
   - `/setup_buttons`
   - `/sync_now`
 - 頻道文字訊息監聽，自動抓取成員貼上的代碼
-- 自動置底：每次互動或新訊息後刪除舊面板並重發到最下方
+- 每位使用者各自追蹤「已看過的新碼」，避免重複顯示
+- 支援面板頻道及其底下 Discord 討論串（Thread）貼碼收錄
+- 自動置底：每次互動、貼碼或新公告後都會把面板重發到最下方，背景巡檢也會補救
 
 ## 快速上手
 
@@ -190,8 +192,9 @@ python -m wwm_codebot.main
 
 - `新增兌換碼`
   - 開啟 Modal 輸入一筆或多筆代碼
-- `查詢當月列表`
-  - 顯示本月已收錄碼清單
+- `新兌換碼`
+  - 顯示你本月尚未查看的有效兌換碼
+  - 顯示後會自動標記為已讀，不會重複出現在你的個人清單中
   - 若資料太多，會自動截斷並顯示「其餘 X 筆未顯示」
 
 ### Slash Commands
@@ -218,6 +221,7 @@ python -m wwm_codebot.main
 ### 頻道貼碼
 
 - 成員直接在面板頻道貼上文字
+- 或在該頻道底下的討論串貼上文字
 - Bot 會自動從文字中抓出代碼
 - 若是新有效碼，會立即公告
 - 然後把面板重新置底
@@ -296,7 +300,7 @@ chmod +x deploy.sh
 
 ```env
 USE_REGISTRY_IMAGE=true
-IMAGE_NAME=ghcr.io/<owner>/<repo>/wwm-codebot:latest
+IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
 ```
 
 此時 `deploy.sh` 會改走：
@@ -352,7 +356,7 @@ docker compose logs -f watchtower
 
 - 若你目前使用 `USE_REGISTRY_IMAGE=false` 的本機 build 模式，`watchtower` 不會因 Git 原始碼更新而自動重建容器。
 - `watchtower` 最適合搭配 registry 映像模式，例如 `ghcr.io/...:latest`。
-- 如果你是走本機 build 模式，建議仍以 `./deploy.sh` 或 GitHub Actions SSH 部署為主。
+- 如果你是走本機 build 模式，建議仍以 `./deploy.sh` 手動更新為主。
 
 #### 搭配 GHCR（推薦的全自動更新模式）
 
@@ -401,40 +405,7 @@ docker compose logs -f watchtower
 
 或是把 GHCR package 設為 public（Packages → Package settings → Change visibility），就不需要登入。
 
-### 10. GitHub Actions 自動 SSH 部署
-
-已新增 workflow： [.github/workflows/deploy.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/deploy.yml)
-
-觸發條件：
-
-- 手動執行 `workflow_dispatch`
-
-請在 GitHub repository secrets 設定以下值：
-
-- `VPS_HOST`：主機 IP 或網域
-- `VPS_USER`：SSH 使用者
-- `VPS_SSH_KEY`：部署私鑰內容
-- `VPS_PORT`：SSH port，通常是 `22`
-- `VPS_APP_DIR`：專案在主機上的路徑，例如 `/opt/wwm-codebot`
-
-Workflow 會透過 SSH 進入主機後執行：
-
-```bash
-cd <VPS_APP_DIR>
-chmod +x deploy.sh
-BRANCH=main ./deploy.sh
-```
-
-建議首次上線時，先手動在主機完成以下動作一次：
-
-- 安裝 Docker / Compose
-- `git clone` 專案
-- 建立 `.env`
-- 建立 `data/`
-
-之後再交給 GitHub Actions 自動部署。
-
-### 11. GitHub Actions 抓巴哈 Snapshot
+### 10. GitHub Actions 抓巴哈 Snapshot
 
 已新增 workflow： [.github/workflows/bahamut-snapshot.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/bahamut-snapshot.yml)
 
@@ -526,18 +497,18 @@ docker compose restart wwm-codebot
 
 就代表 VPS 已經不再直接抓巴哈。
 
-### 12. 常用指令
+### 11. 常用指令
 
 - `/setup_buttons`：在目前頻道重新發送面板，並記住該頻道作為面板/監聽頻道
 - `/sync_now`：立刻同步巴哈文章並更新狀態（可選填特定 code 來檢查 status）
 
-### 13. 部署注意事項
+### 12. 部署注意事項
 
 - 這是 Discord Bot，不需要開放 HTTP port。
 - 請確認 VPS 出站網路可連到 `discord.com` 與 `forum.gamer.com.tw`。
 - 若你要自動重開機恢復，`restart: unless-stopped` 已經會自動拉起容器。
-- 若同時開啟 `watchtower` 與 GitHub Actions SSH 部署，建議明確區分用途：
-  - `GitHub Actions` 負責原始碼更新後重建或拉新版本
+- 若同時使用 `./deploy.sh` 與 `watchtower`，建議明確區分用途：
+  - `./deploy.sh` 負責手動更新原始碼後重建或拉新版本
   - `watchtower` 負責 registry 映像有新版時自動套用
 - 若之後要搬到 Supabase，只需要替換 `storage.py` 的資料層，不影響 Docker 部署方式。
 
@@ -578,7 +549,7 @@ cat .env | grep REMOTE_SNAPSHOT_URL
 5. 確認 GHCR image 是否有更新
 6. 最後才回頭檢查 Discord 權限或巴哈抓取
 
-### 14. 常見錯誤排除
+### 13. 常見錯誤排除
 
 #### sqlite3.OperationalError: unable to open database file
 
@@ -635,7 +606,7 @@ docker info
 目前系統已處理：
 
 - 按鈕先 `defer`
-- 月清單超過 2000 字會自動截斷
+- `新兌換碼` 清單超過 2000 字會自動截斷
 
 如果仍發生，請看：
 
@@ -647,7 +618,7 @@ docker compose logs --since=2m wwm-codebot
 
 這代表訊息超過 Discord 2000 字限制。
 
-目前 `查詢當月列表` 已內建截斷邏輯；如果你仍看到這個錯，通常代表 VPS 還沒更新到最新 image。
+目前 `新兌換碼` 已內建截斷邏輯；如果你仍看到這個錯，通常代表 VPS 還沒更新到最新 image。
 
 請執行：
 
