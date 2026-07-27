@@ -396,6 +396,7 @@ class RedeemCodeBot(commands.Bot):
             color=discord.Color.green(),
         )
         await channel.send(embed=embed)
+        await self.repost_panel(channel_id=channel.id)
 
     async def build_monthly_report(self, user_id: int) -> str:
         rows = await self.storage.get_unseen_monthly_rows(
@@ -493,6 +494,15 @@ class RedeemCodeBot(commands.Bot):
             else:
                 await channel.fetch_message(int(current_id))
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            await self.repost_panel(channel_id=channel.id)
+            return
+
+        latest_message = None
+        async for message in channel.history(limit=1):
+            latest_message = message
+            break
+
+        if latest_message is None or latest_message.id != int(current_id):
             await self.repost_panel(channel_id=channel.id)
 
     @ensure_panel.before_loop
