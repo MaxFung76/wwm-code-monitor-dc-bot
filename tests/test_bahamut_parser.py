@@ -32,7 +32,7 @@ def test_parse_bahamut_codes_marks_active_and_expired() -> None:
     assert status_map["WWMDEVTALK"] == CodeStatus.ACTIVE
     assert status_map["TF37WR876K"] == CodeStatus.ACTIVE
     assert status_map["GOHOME123"] == CodeStatus.ACTIVE
-    assert status_map["hh6am6c8rf"] == CodeStatus.ACTIVE
+    assert status_map["HH6AM6C8RF"] == CodeStatus.ACTIVE
     assert status_map["YYP4QNC7NQ"] == CodeStatus.ACTIVE
     assert status_map["AC46AQH368"] == CodeStatus.EXPIRED
     assert status_map["GOOSENEWS"] == CodeStatus.EXPIRED
@@ -227,6 +227,96 @@ def test_storage_hides_seen_monthly_codes_per_user(tmp_path: Path) -> None:
 
     reactivated_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))
     assert [row.code for row in reactivated_rows] == ["UNSEEN123"]
+
+
+def test_storage_treats_codes_case_insensitively(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "codes.db")
+
+    import asyncio
+
+    asyncio.run(storage.initialize())
+
+    result = asyncio.run(
+        storage.reconcile_codes(
+            [
+                RedeemCode(code="abc123xy", status=CodeStatus.ACTIVE, note="lower"),
+                RedeemCode(code="ABC123XY", status=CodeStatus.ACTIVE, note="upper"),
+            ],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+
+    assert [item.code for item in result.new_active_codes] == ["ABC123XY"]
+    assert asyncio.run(storage.get_code_status("abc123xy")) == ("active", "monitor")
+    assert asyncio.run(storage.get_code_status("ABC123XY")) == ("active", "monitor")
+
+
+def test_storage_initialize_merges_case_variant_codes(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "codes.db")
+
+    import asyncio
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    asyncio.run(storage.initialize())
+
+    start = datetime.now(timezone.utc)
+    lower_seen = start.isoformat()
+    upper_seen = (start + timedelta(minutes=5)).isoformat()
+
+    conn = sqlite3.connect(storage.database_path)
+    conn.execute(
+        """
+        INSERT INTO redeem_codes(
+            code, status, source_url, source_type, note,
+            first_seen_at, last_seen_at, last_status_change_at, last_announced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "abc123xy",
+            "active",
+            "https://example.com/lower",
+            "message",
+            "lower",
+            lower_seen,
+            lower_seen,
+            lower_seen,
+            lower_seen,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO redeem_codes(
+            code, status, source_url, source_type, note,
+            first_seen_at, last_seen_at, last_status_change_at, last_announced_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "ABC123XY",
+            "expired",
+            "https://example.com/upper",
+            "monitor",
+            "upper",
+            upper_seen,
+            upper_seen,
+            upper_seen,
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    asyncio.run(storage.initialize())
+
+    conn = sqlite3.connect(storage.database_path)
+    rows = conn.execute(
+        "SELECT code, status, source_type FROM redeem_codes ORDER BY code"
+    ).fetchall()
+    conn.close()
+
+    assert rows == [("ABC123XY", "expired", "monitor")]
+    assert asyncio.run(storage.get_code_status("abc123xy")) == ("expired", "monitor")
 
 
 def test_channel_matches_target_supports_thread_parent() -> None:

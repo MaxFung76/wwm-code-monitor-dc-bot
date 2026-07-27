@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .bahamut import is_probable_code
+from .bahamut import is_probable_code, normalize_code
 from .models import CodeStatus, ReconcileResult, RedeemCode
 
 
@@ -107,6 +108,7 @@ class Storage:
                 """
             )
             self._delete_invalid_codes(conn)
+            self._normalize_existing_codes(conn)
 
     def _reconcile_codes(
         self,
@@ -116,7 +118,11 @@ class Storage:
     ) -> ReconcileResult:
         now = datetime.now(timezone.utc).isoformat()
         deduped = {
-            item.code: item
+            normalize_code(item.code): RedeemCode(
+                code=normalize_code(item.code),
+                status=item.status,
+                note=item.note,
+            )
             for item in codes
             if is_probable_code(item.code)
         }
@@ -276,7 +282,7 @@ class Storage:
         codes: list[str],
         seen_at: datetime | None = None,
     ) -> None:
-        valid_codes = [code for code in codes if is_probable_code(code)]
+        valid_codes = [normalize_code(code) for code in codes if is_probable_code(code)]
         if not valid_codes:
             return
 
@@ -294,6 +300,7 @@ class Storage:
     def _get_code_status(self, code: str) -> tuple[str, str] | None:
         if not is_probable_code(code):
             return None
+        normalized = normalize_code(code)
         with self._connect() as conn:
             row = conn.execute(
                 """
@@ -301,7 +308,7 @@ class Storage:
                 FROM redeem_codes
                 WHERE code = ?
                 """,
-                (code,),
+                (normalized,),
             ).fetchone()
         if row is None:
             return None
@@ -334,3 +341,113 @@ class Storage:
             f"DELETE FROM user_code_views WHERE code IN ({placeholders})",
             invalid_codes,
         )
+
+    def _normalize_existing_codes(self, conn: sqlite3.Connection) -> None:
+        redeem_rows = conn.execute("SELECT * FROM redeem_codes").fetchall()
+        merged_codes: dict[str, dict[str, str | None]] = {}
+        for row in redeem_rows:
+            normalized = normalize_code(str(row["code"]))
+            current = merged_codes.get(normalized)
+            candidate = dict(row)
+            candidate["code"] = normalized
+            if current is None:
+                merged_codes[normalized] = candidate
+                continue
+            merged_codes[normalized] = self._merge_redeem_rows(current, candidate)
+
+        conn.execute("DELETE FROM redeem_codes")
+        conn.executemany(
+            """
+            INSERT INTO redeem_codes(
+                code, status, source_url, source_type, note,
+                first_seen_at, last_seen_at, last_status_change_at, last_announced_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    row["code"],
+                    row["status"],
+                    row["source_url"],
+                    row["source_type"],
+                    row["note"],
+                    row["first_seen_at"],
+                    row["last_seen_at"],
+                    row["last_status_change_at"],
+                    row["last_announced_at"],
+                )
+                for row in merged_codes.values()
+            ],
+        )
+
+        observation_rows = conn.execute("SELECT * FROM observations").fetchall()
+        conn.execute("DELETE FROM observations")
+        conn.executemany(
+            """
+            INSERT INTO observations(code, status, source_url, source_type, note, observed_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    normalize_code(str(row["code"])),
+                    row["status"],
+                    row["source_url"],
+                    row["source_type"],
+                    row["note"],
+                    row["observed_at"],
+                )
+                for row in observation_rows
+            ],
+        )
+
+        view_rows = conn.execute("SELECT * FROM user_code_views").fetchall()
+        merged_views: dict[tuple[int, str], str] = {}
+        for row in view_rows:
+            key = (int(row["user_id"]), normalize_code(str(row["code"])))
+            seen_at = str(row["seen_at"])
+            existing = merged_views.get(key)
+            if existing is None or seen_at > existing:
+                merged_views[key] = seen_at
+
+        conn.execute("DELETE FROM user_code_views")
+        conn.executemany(
+            """
+            INSERT INTO user_code_views(user_id, code, seen_at)
+            VALUES (?, ?, ?)
+            """,
+            [(user_id, code, seen_at) for (user_id, code), seen_at in merged_views.items()],
+        )
+
+    def _merge_redeem_rows(
+        self,
+        existing: dict[str, str | None],
+        candidate: dict[str, str | None],
+    ) -> dict[str, str | None]:
+        preferred = self._pick_latest_by_timestamp((existing, candidate), "last_seen_at")
+        return {
+            "code": str(existing["code"]),
+            "status": str(preferred["status"]),
+            "source_url": str(preferred["source_url"]),
+            "source_type": str(preferred["source_type"]),
+            "note": preferred["note"],
+            "first_seen_at": min(str(existing["first_seen_at"]), str(candidate["first_seen_at"])),
+            "last_seen_at": max(str(existing["last_seen_at"]), str(candidate["last_seen_at"])),
+            "last_status_change_at": max(
+                str(existing["last_status_change_at"]),
+                str(candidate["last_status_change_at"]),
+            ),
+            "last_announced_at": self._max_optional_timestamp(
+                existing["last_announced_at"],
+                candidate["last_announced_at"],
+            ),
+        }
+
+    def _pick_latest_by_timestamp(
+        self,
+        rows: Iterable[dict[str, str | None]],
+        field: str,
+    ) -> dict[str, str | None]:
+        return max(rows, key=lambda row: str(row[field]))
+
+    def _max_optional_timestamp(self, first: str | None, second: str | None) -> str | None:
+        options = [value for value in (first, second) if value is not None]
+        return max(options) if options else None

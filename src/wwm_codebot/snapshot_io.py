@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from .bahamut import normalize_code
 from .models import CodeSnapshot, CodeStatus, RedeemCode
 
 
@@ -28,7 +29,7 @@ def snapshot_from_dict(data: dict[str, Any]) -> CodeSnapshot:
         observed_at=datetime.fromisoformat(str(data["observed_at"])),
         codes=[
             RedeemCode(
-                code=str(item["code"]),
+                code=normalize_code(str(item["code"])),
                 status=CodeStatus(str(item["status"])),
                 note=None if item.get("note") is None else str(item["note"]),
             )

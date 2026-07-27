@@ -9,7 +9,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from .bahamut import BahamutMonitor, extract_codes_from_text
+from .bahamut import BahamutMonitor, extract_codes_from_text, normalize_code
 from .config import Settings
 from .models import CodeSnapshot, CodeStatus, RedeemCode
 from .snapshot_io import snapshot_from_json
@@ -292,17 +292,21 @@ class RedeemCodeBot(commands.Bot):
             ]
 
             if code:
-                target = next((item for item in snapshot.codes if item.code == code), None)
+                normalized_code = normalize_code(code)
+                target = next(
+                    (item for item in snapshot.codes if item.code == normalized_code),
+                    None,
+                )
                 if target is None:
-                    lines.append(f"- snapshot[{code}]: not found")
+                    lines.append(f"- snapshot[{normalized_code}]: not found")
                 else:
-                    lines.append(f"- snapshot[{code}]: {target.status.value}")
+                    lines.append(f"- snapshot[{normalized_code}]: {target.status.value}")
 
-                db_row = await self.storage.get_code_status(code)
+                db_row = await self.storage.get_code_status(normalized_code)
                 if db_row is None:
-                    lines.append(f"- db[{code}]: not found")
+                    lines.append(f"- db[{normalized_code}]: not found")
                 else:
-                    lines.append(f"- db[{code}]: {db_row[0]} ({db_row[1]})")
+                    lines.append(f"- db[{normalized_code}]: {db_row[0]} ({db_row[1]})")
 
             await interaction.followup.send("\n".join(lines), ephemeral=True)
         except Exception as exc:
