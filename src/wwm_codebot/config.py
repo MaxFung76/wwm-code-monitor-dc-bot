@@ -15,7 +15,7 @@ class Settings:
     forum_url: str
     remote_snapshot_url: str | None
     database_path: Path
-    monitor_interval_minutes: int = 10
+    monitor_interval_minutes: int = 60
     request_timeout_seconds: int = 20
 
     @classmethod
@@ -50,6 +50,6 @@ class Settings:
             forum_url=forum_url,
             remote_snapshot_url=remote_snapshot_url,
             database_path=database_path,
-            monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "10")),
+            monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "60")),
             request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
         )

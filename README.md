@@ -119,7 +119,7 @@ DISCORD_CHANNEL_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
 REMOTE_SNAPSHOT_URL=
 DATABASE_PATH=data/redeem_codes.db
-MONITOR_INTERVAL_MINUTES=10
+MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
 ```
 
@@ -134,7 +134,7 @@ DISCORD_GUILD_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
 REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
 DATABASE_PATH=data/redeem_codes.db
-MONITOR_INTERVAL_MINUTES=10
+MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
 USE_REGISTRY_IMAGE=true
 IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
@@ -266,7 +266,7 @@ DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
 REMOTE_SNAPSHOT_URL=
-MONITOR_INTERVAL_MINUTES=10
+MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
 USE_REGISTRY_IMAGE=false
 IMAGE_NAME=wwm-codebot:local
@@ -411,7 +411,7 @@ docker compose logs -f watchtower
 
 用途：
 
-- 每 10 分鐘在 GitHub runner 抓一次巴哈文章
+- 每 60 分鐘在 GitHub runner 抓一次巴哈文章
 - 產生 `bahamut_snapshot.json`
 - 發佈到 `snapshot-cache` 分支
 
@@ -421,17 +421,12 @@ docker compose logs -f watchtower
 
 ```yaml
 schedule:
-  - cron: "*/10 * * * *"
+  - cron: "0 * * * *"
 ```
 
-代表大約每 10 分鐘跑一次，也就是：
+代表每小時跑一次，也就是：
 
 - `00`
-- `10`
-- `20`
-- `30`
-- `40`
-- `50`
 
 注意：
 
