@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import discord
 import httpx
@@ -17,6 +18,26 @@ from .storage import Storage
 
 PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
+
+
+def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
+    candidates = [snapshot_url]
+    parsed = urlparse(snapshot_url)
+    if parsed.scheme != "https" or parsed.netloc != "raw.githubusercontent.com":
+        return candidates
+
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 4:
+        return candidates
+
+    owner, repo, ref, *rest = parts
+    if not rest:
+        return candidates
+
+    mirror_url = f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{ref}/{'/'.join(rest)}"
+    if mirror_url not in candidates:
+        candidates.append(mirror_url)
+    return candidates
 
 
 def channel_matches_target(*, channel_id: int, parent_id: int | None, target_id: int) -> bool:
@@ -556,13 +577,44 @@ class RedeemCodeBot(commands.Bot):
 
     async def fetch_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
         if self.settings.remote_snapshot_url:
-            snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
-            return snapshot, "github_snapshot"
+            try:
+                snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
+                return snapshot, "github_snapshot"
+            except Exception as exc:
+                print(
+                    "Remote snapshot fetch failed, falling back to live Bahamut: "
+                    f"{type(exc).__name__} {exc}",
+                    flush=True,
+                )
         snapshot = await self.monitor.fetch_snapshot()
         return snapshot, "live_bahamut"
 
     async def fetch_remote_snapshot(self, snapshot_url: str) -> CodeSnapshot:
-        async with httpx.AsyncClient(timeout=self.settings.request_timeout_seconds) as client:
-            response = await client.get(snapshot_url, follow_redirects=True)
-            response.raise_for_status()
-        return snapshot_from_json(response.text)
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/126.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json,text/plain;q=0.9,*/*;q=0.8",
+        }
+        last_error: Exception | None = None
+        async with httpx.AsyncClient(
+            timeout=self.settings.request_timeout_seconds,
+            headers=headers,
+        ) as client:
+            for candidate_url in build_snapshot_candidate_urls(snapshot_url):
+                try:
+                    response = await client.get(candidate_url, follow_redirects=True)
+                    response.raise_for_status()
+                    return snapshot_from_json(response.text)
+                except Exception as exc:
+                    last_error = exc
+                    print(
+                        "Snapshot fetch attempt failed: "
+                        f"url={candidate_url} {type(exc).__name__} {exc}",
+                        flush=True,
+                    )
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Snapshot fetch failed without a captured exception.")

@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import httpx
 
 from wwm_codebot.bahamut import _ensure_article_html, parse_bahamut_codes
-from wwm_codebot.discord_bot import channel_matches_target
+from wwm_codebot.discord_bot import (
+    build_snapshot_candidate_urls,
+    channel_matches_target,
+    RedeemCodeBot,
+)
 from wwm_codebot.models import CodeSnapshot, CodeStatus, RedeemCode
 from wwm_codebot.snapshot_io import snapshot_from_json, snapshot_to_json
 from wwm_codebot.storage import Storage
@@ -323,3 +329,45 @@ def test_channel_matches_target_supports_thread_parent() -> None:
     assert channel_matches_target(channel_id=123, parent_id=None, target_id=123) is True
     assert channel_matches_target(channel_id=456, parent_id=123, target_id=123) is True
     assert channel_matches_target(channel_id=456, parent_id=999, target_id=123) is False
+
+
+def test_build_snapshot_candidate_urls_adds_jsdelivr_mirror() -> None:
+    assert build_snapshot_candidate_urls(
+        "https://raw.githubusercontent.com/MaxFung76/wwm-code-monitor-dc-bot/snapshot-cache/bahamut_snapshot.json"
+    ) == [
+        "https://raw.githubusercontent.com/MaxFung76/wwm-code-monitor-dc-bot/snapshot-cache/bahamut_snapshot.json",
+        "https://cdn.jsdelivr.net/gh/MaxFung76/wwm-code-monitor-dc-bot@snapshot-cache/bahamut_snapshot.json",
+    ]
+
+
+def test_fetch_monitor_snapshot_falls_back_to_live_when_remote_snapshot_fails() -> None:
+    bot = object.__new__(RedeemCodeBot)
+    expected_snapshot = CodeSnapshot(
+        source_url="https://example.com/live",
+        observed_at=parse_bahamut_codes(
+            '<div class="c-article__content"><div>FALLBACK88</div></div>',
+            "https://example.com/live",
+        ).observed_at,
+        codes=[RedeemCode(code="FALLBACK88", status=CodeStatus.ACTIVE, note="live")],
+    )
+    bot.settings = SimpleNamespace(
+        remote_snapshot_url="https://raw.githubusercontent.com/example/repo/main/snapshot.json"
+    )
+
+    async def fake_fetch_remote_snapshot(_: str) -> CodeSnapshot:
+        request = httpx.Request("GET", "https://example.com/snapshot.json")
+        response = httpx.Response(429, request=request)
+        raise httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
+
+    async def fake_live_snapshot() -> CodeSnapshot:
+        return expected_snapshot
+
+    bot.fetch_remote_snapshot = fake_fetch_remote_snapshot
+    bot.monitor = SimpleNamespace(fetch_snapshot=fake_live_snapshot)
+
+    import asyncio
+
+    snapshot, mode = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+
+    assert mode == "live_bahamut"
+    assert snapshot == expected_snapshot
