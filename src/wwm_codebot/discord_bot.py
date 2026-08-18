@@ -192,25 +192,26 @@ class RedeemCodeBot(commands.Bot):
     def build_panel_embed(self) -> discord.Embed:
         embed = discord.Embed(
             title="兌換碼面板",
-            description="這裡會整理最新兌換碼，方便你補登、查看新碼，也能快速掌握同步狀態。",
+            description=(
+                "這裡會整理最新兌換碼。\n"
+                "你可以補登代碼、查看新碼，也可以直接在這裡貼上兌換碼。"
+            ),
             color=discord.Color.blurple(),
         )
         embed.add_field(
             name="快速操作",
             value=(
-                "`新增兌換碼`：手動補登你找到的代碼\n"
+                "`新增兌換碼`：手動補登\n"
                 "`新兌換碼`：查看你還沒看過的有效代碼"
             ),
             inline=False,
         )
         embed.add_field(
-            name="自動同步",
-            value="機器人會定期同步巴哈文章，更新每組兌換碼的最新狀態。",
-            inline=False,
-        )
-        embed.add_field(
-            name="自動收錄",
-            value="在這個頻道或討論串直接貼上兌換碼，機器人會自動幫你收錄。",
+            name="自動處理",
+            value=(
+                "機器人會定期同步巴哈文章。\n"
+                "在這個頻道或討論串貼上兌換碼，也會自動幫你收錄。"
+            ),
             inline=False,
         )
         embed.set_footer(text="有新公告或互動時，面板會自動回到底部。")
