@@ -13,6 +13,7 @@ class Settings:
     discord_channel_id: int
     discord_guild_id: int | None
     forum_url: str
+    arlen_codes_url: str | None
     remote_snapshot_url: str | None
     database_path: Path
     monitor_interval_minutes: int = 60
@@ -37,6 +38,13 @@ class Settings:
             "FORUM_URL",
             "https://forum.gamer.com.tw/C.php?bsn=75703&snA=388",
         ).strip()
+        arlen_codes_url = (
+            os.getenv(
+                "ARLEN_CODES_URL",
+                "https://www.arlenfuture.com/games/where-winds-meet/codes/",
+            ).strip()
+            or None
+        )
         remote_snapshot_url = os.getenv("REMOTE_SNAPSHOT_URL", "").strip() or None
 
         database_path = Path(
@@ -48,6 +56,7 @@ class Settings:
             discord_channel_id=int(channel_id),
             discord_guild_id=guild_id,
             forum_url=forum_url,
+            arlen_codes_url=arlen_codes_url,
             remote_snapshot_url=remote_snapshot_url,
             database_path=database_path,
             monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "60")),

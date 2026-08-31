@@ -117,6 +117,7 @@ pip install -e .[dev]
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+ARLEN_CODES_URL=https://www.arlenfuture.com/games/where-winds-meet/codes/
 REMOTE_SNAPSHOT_URL=
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=60
@@ -132,6 +133,7 @@ DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_GUILD_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+ARLEN_CODES_URL=https://www.arlenfuture.com/games/where-winds-meet/codes/
 REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=60
@@ -152,6 +154,9 @@ IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
   - 有設定時，`/setup_buttons` 與 `/sync_now` 會比較快出現
 - `FORUM_URL`
   - 巴哈文章 URL
+- `ARLEN_CODES_URL`
+  - 額外兌換碼來源，預設為阿冷整理頁
+  - 若不想使用此來源，可設為空字串
 - `REMOTE_SNAPSHOT_URL`
   - 若有設定，bot 會優先讀這份 JSON，不再由 VPS 直接抓巴哈
 - `DATABASE_PATH`
@@ -265,6 +270,7 @@ cp .env.example .env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+ARLEN_CODES_URL=https://www.arlenfuture.com/games/where-winds-meet/codes/
 REMOTE_SNAPSHOT_URL=
 MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
@@ -280,7 +286,7 @@ IMAGE_NAME=wwm-codebot:local
 REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
 ```
 
-設了 `REMOTE_SNAPSHOT_URL` 後，bot 會優先讀這份 snapshot，不再由 VPS 直接抓巴哈文章。
+設了 `REMOTE_SNAPSHOT_URL` 後，bot 會優先讀這份 snapshot，不再由 VPS 直接抓巴哈文章；同步時仍可額外合併 `ARLEN_CODES_URL` 的內容。
 
 ### 4. 使用 `deploy.sh` 一鍵部署
 

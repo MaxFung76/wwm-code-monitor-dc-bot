@@ -10,6 +10,7 @@ import httpx
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from .arlen import ArlenCodesMonitor
 from .bahamut import BahamutMonitor, extract_codes_from_text, normalize_code
 from .config import Settings
 from .models import CodeSnapshot, CodeStatus, RedeemCode
@@ -42,6 +43,34 @@ def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
 
 def channel_matches_target(*, channel_id: int, parent_id: int | None, target_id: int) -> bool:
     return channel_id == target_id or parent_id == target_id
+
+
+def merge_snapshots(snapshots: list[CodeSnapshot]) -> CodeSnapshot:
+    if not snapshots:
+        raise ValueError("Cannot merge an empty snapshot list.")
+    if len(snapshots) == 1:
+        return snapshots[0]
+
+    collected: dict[str, RedeemCode] = {}
+    order: list[str] = []
+    for snapshot in snapshots:
+        for item in snapshot.codes:
+            code = normalize_code(item.code)
+            existing = collected.get(code)
+            candidate = RedeemCode(code=code, status=item.status, note=item.note)
+            if existing is None:
+                collected[code] = candidate
+                order.append(code)
+                continue
+            if existing.status == CodeStatus.ACTIVE and candidate.status == CodeStatus.EXPIRED:
+                collected[code] = candidate
+
+    source_urls = list(dict.fromkeys(snapshot.source_url for snapshot in snapshots))
+    return CodeSnapshot(
+        source_url=" | ".join(source_urls),
+        observed_at=max(snapshot.observed_at for snapshot in snapshots),
+        codes=[collected[code] for code in order],
+    )
 
 
 async def send_interaction_message(
@@ -185,6 +214,14 @@ class RedeemCodeBot(commands.Bot):
             forum_url=settings.forum_url,
             timeout_seconds=settings.request_timeout_seconds,
         )
+        self.arlen_monitor = (
+            ArlenCodesMonitor(
+                source_url=settings.arlen_codes_url,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+            if settings.arlen_codes_url
+            else None
+        )
         self.panel_lock = asyncio.Lock()
         self._initial_sync_done = False
         self._resolved_channel_logged = False
@@ -209,7 +246,7 @@ class RedeemCodeBot(commands.Bot):
         embed.add_field(
             name="自動處理",
             value=(
-                "機器人會定期同步巴哈文章。\n"
+                "機器人會定期同步監控來源。\n"
                 "在這個頻道或討論串貼上兌換碼，也會自動幫你收錄。"
             ),
             inline=False,
@@ -234,7 +271,7 @@ class RedeemCodeBot(commands.Bot):
         self.tree.add_command(
             app_commands.Command(
                 name="sync_now",
-                description="立刻同步巴哈文章並更新兌換碼狀態（可選填 code）",
+                description="立刻同步監控來源並更新兌換碼狀態（可選填 code）",
                 callback=self._sync_now,
             )
         )
@@ -305,7 +342,7 @@ class RedeemCodeBot(commands.Bot):
             expired_count = sum(1 for item in snapshot.codes if item.status == CodeStatus.EXPIRED)
 
             lines = [
-                "已同步巴哈文章。",
+                "已同步監控來源。",
                 f"- mode: {mode}",
                 f"- active: {active_count}",
                 f"- expired: {expired_count}",
@@ -389,7 +426,7 @@ class RedeemCodeBot(commands.Bot):
             if result.new_active_codes:
                 await self.announce_new_codes(
                     result.new_active_codes,
-                    title="巴哈發現新兌換碼",
+                    title="監控來源發現新兌換碼",
                 )
         except Exception as exc:
             channel = await self.resolve_channel(await self.get_panel_channel_id())
@@ -577,6 +614,35 @@ class RedeemCodeBot(commands.Bot):
         return None
 
     async def fetch_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
+        snapshots: list[CodeSnapshot] = []
+        modes: list[str] = []
+        errors: list[str] = []
+
+        try:
+            snapshot, mode = await self.fetch_primary_monitor_snapshot()
+            snapshots.append(snapshot)
+            modes.append(mode)
+        except Exception as exc:
+            errors.append(f"primary={type(exc).__name__} {exc}")
+
+        if getattr(self, "arlen_monitor", None) is not None:
+            try:
+                snapshots.append(await self.arlen_monitor.fetch_snapshot())
+                modes.append("arlen_codes")
+            except Exception as exc:
+                print(
+                    "Arlen source fetch failed, continuing with remaining monitors: "
+                    f"{type(exc).__name__} {exc}",
+                    flush=True,
+                )
+                errors.append(f"arlen={type(exc).__name__} {exc}")
+
+        if not snapshots:
+            raise RuntimeError("All monitor sources failed: " + " | ".join(errors))
+
+        return merge_snapshots(snapshots), "+".join(modes)
+
+    async def fetch_primary_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
         if self.settings.remote_snapshot_url:
             try:
                 snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)

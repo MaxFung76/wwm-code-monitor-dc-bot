@@ -6,10 +6,12 @@ from types import SimpleNamespace
 import pytest
 import httpx
 
+from wwm_codebot.arlen import parse_arlen_codes
 from wwm_codebot.bahamut import _ensure_article_html, parse_bahamut_codes
 from wwm_codebot.discord_bot import (
     build_snapshot_candidate_urls,
     channel_matches_target,
+    merge_snapshots,
     RedeemCodeBot,
 )
 from wwm_codebot.models import CodeSnapshot, CodeStatus, RedeemCode
@@ -44,6 +46,35 @@ def test_parse_bahamut_codes_marks_active_and_expired() -> None:
     assert status_map["GOOSENEWS"] == CodeStatus.EXPIRED
     assert status_map["DEVLOG2601"] == CodeStatus.EXPIRED
     assert "1182577423678713917" not in status_map
+
+
+def test_parse_arlen_codes_marks_active_and_expired() -> None:
+    html = """
+    <html>
+      <body>
+        <section>
+          <h2>✅ 有效兌換碼103 個</h2>
+          <div>長鳴玉 ×3</div>
+          <div>PSEEQPHJ83</div>
+          <div>FINALTRUTH</div>
+        </section>
+        <section>
+          <h2>❌ 失效兌換碼269 個</h2>
+          <div>KPCA7MF6KN 失效 複製 ※</div>
+          <div>WWMR3DD1T 失效 複製 ※</div>
+          <div>PSEEQPHJ83 失效 複製 ※</div>
+        </section>
+      </body>
+    </html>
+    """
+
+    snapshot = parse_arlen_codes(html, "https://example.com/arlen")
+    status_map = {item.code: item.status for item in snapshot.codes}
+
+    assert status_map["PSEEQPHJ83"] == CodeStatus.EXPIRED
+    assert status_map["FINALTRUTH"] == CodeStatus.ACTIVE
+    assert status_map["KPCA7MF6KN"] == CodeStatus.EXPIRED
+    assert status_map["WWMR3DD1T"] == CodeStatus.EXPIRED
 
 
 def test_storage_only_notifies_new_active_codes(tmp_path: Path) -> None:
@@ -340,6 +371,32 @@ def test_build_snapshot_candidate_urls_adds_jsdelivr_mirror() -> None:
     ]
 
 
+def test_merge_snapshots_prefers_expired_status_from_later_source() -> None:
+    bahamut_snapshot = CodeSnapshot(
+        source_url="https://example.com/bahamut",
+        observed_at=parse_bahamut_codes(
+            '<div class="c-article__content"><div>FINALTRUTH</div></div>',
+            "https://example.com/bahamut",
+        ).observed_at,
+        codes=[RedeemCode(code="FINALTRUTH", status=CodeStatus.ACTIVE, note="bahamut")],
+    )
+    arlen_snapshot = CodeSnapshot(
+        source_url="https://example.com/arlen",
+        observed_at=bahamut_snapshot.observed_at,
+        codes=[
+            RedeemCode(code="FINALTRUTH", status=CodeStatus.EXPIRED, note="arlen expired"),
+            RedeemCode(code="TF37WR876K", status=CodeStatus.ACTIVE, note="arlen active"),
+        ],
+    )
+
+    merged = merge_snapshots([bahamut_snapshot, arlen_snapshot])
+    status_map = {item.code: item.status for item in merged.codes}
+
+    assert merged.source_url == "https://example.com/bahamut | https://example.com/arlen"
+    assert status_map["FINALTRUTH"] == CodeStatus.EXPIRED
+    assert status_map["TF37WR876K"] == CodeStatus.ACTIVE
+
+
 def test_fetch_monitor_snapshot_falls_back_to_live_when_remote_snapshot_fails() -> None:
     bot = object.__new__(RedeemCodeBot)
     expected_snapshot = CodeSnapshot(
@@ -371,3 +428,43 @@ def test_fetch_monitor_snapshot_falls_back_to_live_when_remote_snapshot_fails() 
 
     assert mode == "live_bahamut"
     assert snapshot == expected_snapshot
+
+
+def test_fetch_monitor_snapshot_merges_arlen_source() -> None:
+    bot = object.__new__(RedeemCodeBot)
+    live_snapshot = CodeSnapshot(
+        source_url="https://example.com/live",
+        observed_at=parse_bahamut_codes(
+            '<div class="c-article__content"><div>FINALTRUTH</div></div>',
+            "https://example.com/live",
+        ).observed_at,
+        codes=[RedeemCode(code="FINALTRUTH", status=CodeStatus.ACTIVE, note="live")],
+    )
+    arlen_snapshot = CodeSnapshot(
+        source_url="https://example.com/arlen",
+        observed_at=live_snapshot.observed_at,
+        codes=[
+            RedeemCode(code="FINALTRUTH", status=CodeStatus.EXPIRED, note="arlen"),
+            RedeemCode(code="TF37WR876K", status=CodeStatus.ACTIVE, note="arlen"),
+        ],
+    )
+    bot.settings = SimpleNamespace(remote_snapshot_url=None)
+    bot.monitor = SimpleNamespace(fetch_snapshot=lambda: None)
+
+    async def fake_primary() -> tuple[CodeSnapshot, str]:
+        return live_snapshot, "live_bahamut"
+
+    async def fake_arlen() -> CodeSnapshot:
+        return arlen_snapshot
+
+    bot.fetch_primary_monitor_snapshot = fake_primary
+    bot.arlen_monitor = SimpleNamespace(fetch_snapshot=fake_arlen)
+
+    import asyncio
+
+    snapshot, mode = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+
+    status_map = {item.code: item.status for item in snapshot.codes}
+    assert mode == "live_bahamut+arlen_codes"
+    assert status_map["FINALTRUTH"] == CodeStatus.EXPIRED
+    assert status_map["TF37WR876K"] == CodeStatus.ACTIVE
