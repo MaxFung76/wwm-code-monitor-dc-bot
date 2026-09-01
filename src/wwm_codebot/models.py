@@ -5,11 +5,13 @@ from datetime import datetime
 from enum import StrEnum
 
 
+# 兌換碼狀態：ACTIVE 代表仍可使用；EXPIRED 代表已失效（或來源標記為失效）
 class CodeStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"
 
 
+# 單筆兌換碼資料：note 用來存來源附近文字（例如到期資訊或原文片段）
 @dataclass(slots=True)
 class RedeemCode:
     code: str
@@ -17,6 +19,7 @@ class RedeemCode:
     note: str | None = None
 
 
+# 一次「同步」抓到的完整快照
 @dataclass(slots=True)
 class CodeSnapshot:
     source_url: str
@@ -24,6 +27,7 @@ class CodeSnapshot:
     codes: list[RedeemCode]
 
 
+# reconcile 後的差異：new_active_codes 用於公告；changed_codes 供除錯/追蹤
 @dataclass(slots=True)
 class ReconcileResult:
     new_active_codes: list[RedeemCode]

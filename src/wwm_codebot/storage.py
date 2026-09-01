@@ -13,6 +13,7 @@ from .models import CodeStatus, ReconcileResult, RedeemCode
 
 @dataclass(slots=True)
 class MonthlyRow:
+    # 月報顯示用的扁平資料結構（避免 UI 端再做 dict 操作）
     code: str
     status: str
     first_seen_at: str
@@ -21,9 +22,11 @@ class MonthlyRow:
 
 class Storage:
     def __init__(self, database_path: Path) -> None:
+        # 單機 SQLite：資料量不大時足夠，且方便 Docker volume 持久化
         self.database_path = database_path
 
     async def initialize(self) -> None:
+        # 初始化在 background thread 執行，避免阻塞 discord event loop
         await asyncio.to_thread(self._initialize)
 
     async def reconcile_codes(
@@ -33,6 +36,7 @@ class Storage:
         source_url: str,
         source_type: str,
     ) -> ReconcileResult:
+        # 將一批 codes 寫入資料庫並回傳差異（new_active_codes 用於公告）
         return await asyncio.to_thread(
             self._reconcile_codes,
             codes,
@@ -41,12 +45,14 @@ class Storage:
         )
 
     async def get_state(self, key: str) -> str | None:
+        # bot_state：存面板訊息 id / 面板頻道 id 等輕量狀態
         return await asyncio.to_thread(self._get_state, key)
 
     async def set_state(self, key: str, value: str) -> None:
         await asyncio.to_thread(self._set_state, key, value)
 
     async def get_monthly_rows(self, now: datetime | None = None) -> list[MonthlyRow]:
+        # 月報（不含已讀判斷）：回傳本月首次出現的全部代碼
         return await asyncio.to_thread(self._get_monthly_rows, now)
 
     async def get_unseen_monthly_rows(
@@ -54,6 +60,7 @@ class Storage:
         user_id: int,
         now: datetime | None = None,
     ) -> list[MonthlyRow]:
+        # 月報（含已讀判斷）：只回傳 user 尚未看過、且仍為 active 的代碼
         return await asyncio.to_thread(self._get_unseen_monthly_rows, user_id, now)
 
     async def mark_codes_seen(
@@ -62,12 +69,15 @@ class Storage:
         codes: list[str],
         seen_at: datetime | None = None,
     ) -> None:
+        # 標記使用者已讀：同碼若重新變成 active，會以 last_status_change_at 觸發重新顯示
         await asyncio.to_thread(self._mark_codes_seen, user_id, codes, seen_at)
 
     async def get_code_status(self, code: str) -> tuple[str, str] | None:
+        # 供 /sync_now 查核：查詢該 code 目前在 DB 的狀態與來源
         return await asyncio.to_thread(self._get_code_status, code)
 
     def _initialize(self) -> None:
+        # schema 建立 + 啟動時資料修補（移除純數字碼、合併大小寫變體）
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(
@@ -116,6 +126,10 @@ class Storage:
         source_url: str,
         source_type: str,
     ) -> ReconcileResult:
+        # reconcile 核心：
+        # - 將輸入 codes 正規化去重（大寫）
+        # - 永遠寫一筆 observations（作為歷史紀錄）
+        # - 若 status 變化，更新 last_status_change_at 並視情況更新 last_announced_at
         now = datetime.now(timezone.utc).isoformat()
         deduped = {
             normalize_code(item.code): RedeemCode(
@@ -131,6 +145,7 @@ class Storage:
 
         with self._connect() as conn:
             for item in deduped.values():
+                # redeem_codes：保留「目前狀態」；observations：保留「每次觀測」
                 row = conn.execute(
                     """
                     SELECT status
@@ -149,6 +164,7 @@ class Storage:
                 )
 
                 if row is None:
+                    # 新碼：首次建立，active 會立即記錄 last_announced_at（避免重複公告）
                     conn.execute(
                         """
                         INSERT INTO redeem_codes(
@@ -210,6 +226,7 @@ class Storage:
 
                 if has_changed:
                     changed_codes.append(item)
+                # expired -> active 視為「新 active」，需要公告
                 if item.status == CodeStatus.ACTIVE and previous_status != CodeStatus.ACTIVE:
                     new_active_codes.append(item)
 
@@ -235,6 +252,7 @@ class Storage:
             )
 
     def _get_monthly_rows(self, now: datetime | None = None) -> list[MonthlyRow]:
+        # 以 first_seen_at 作為「本月新碼」的判斷基準
         current = now or datetime.now(timezone.utc)
         month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         with self._connect() as conn:
@@ -254,6 +272,8 @@ class Storage:
         user_id: int,
         now: datetime | None = None,
     ) -> list[MonthlyRow]:
+        # user_code_views.seen_at < redeem_codes.last_status_change_at：
+        # 代表使用者看到後該碼又重新變成 active，需要再次顯示
         current = now or datetime.now(timezone.utc)
         month_start = current.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         with self._connect() as conn:
@@ -282,6 +302,7 @@ class Storage:
         codes: list[str],
         seen_at: datetime | None = None,
     ) -> None:
+        # 批次 upsert：同一 user+code 只保留最新 seen_at
         valid_codes = [normalize_code(code) for code in codes if is_probable_code(code)]
         if not valid_codes:
             return
@@ -298,6 +319,7 @@ class Storage:
             )
 
     def _get_code_status(self, code: str) -> tuple[str, str] | None:
+        # 對外查詢前先做基本過濾與正規化，避免把純數字/雜訊當成 code
         if not is_probable_code(code):
             return None
         normalized = normalize_code(code)
@@ -315,11 +337,13 @@ class Storage:
         return (str(row["status"]), str(row["source_type"]))
 
     def _connect(self) -> sqlite3.Connection:
+        # row_factory 設成 Row，便於用 row["field"] 取值
         conn = sqlite3.connect(self.database_path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def _delete_invalid_codes(self, conn: sqlite3.Connection) -> None:
+        # 清理純數字碼（常見為 Discord message id 或其他非兌換碼 token）
         invalid_codes = [
             str(row["code"])
             for row in conn.execute("SELECT code FROM redeem_codes").fetchall()
@@ -343,6 +367,7 @@ class Storage:
         )
 
     def _normalize_existing_codes(self, conn: sqlite3.Connection) -> None:
+        # 歷史資料修補：把大小寫不同但同一組字元的 code 合併成同一筆（統一大寫）
         redeem_rows = conn.execute("SELECT * FROM redeem_codes").fetchall()
         merged_codes: dict[str, dict[str, str | None]] = {}
         for row in redeem_rows:
@@ -422,6 +447,7 @@ class Storage:
         existing: dict[str, str | None],
         candidate: dict[str, str | None],
     ) -> dict[str, str | None]:
+        # 合併策略：以 last_seen_at 較新的那筆作為 status/source 欄位來源，其餘時間欄位做 min/max
         preferred = self._pick_latest_by_timestamp((existing, candidate), "last_seen_at")
         return {
             "code": str(existing["code"]),
@@ -446,8 +472,10 @@ class Storage:
         rows: Iterable[dict[str, str | None]],
         field: str,
     ) -> dict[str, str | None]:
+        # timestamp 皆以 ISO8601 字串存放，可直接用字串比較
         return max(rows, key=lambda row: str(row[field]))
 
     def _max_optional_timestamp(self, first: str | None, second: str | None) -> str | None:
+        # 允許 None：以較晚者為準
         options = [value for value in (first, second) if value is not None]
         return max(options) if options else None
