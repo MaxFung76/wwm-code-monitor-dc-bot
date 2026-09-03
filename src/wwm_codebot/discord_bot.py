@@ -17,14 +17,14 @@ from .models import CodeSnapshot, CodeStatus, RedeemCode
 from .snapshot_io import snapshot_from_json
 from .storage import Storage
 
-# Storage 用於記錄面板訊息 id 與其所在頻道（用來確保面板維持置底）
+# bot_state keys（面板置底用）
 PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 ARLEN_EXPIRED_STREAK_PREFIX = "arlen_expired_streak:"
 
 
 def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
-    # snapshot-cache 的備援鏈：raw.githubusercontent.com -> jsDelivr
+    # raw -> jsDelivr（少踩 429）
     candidates = [snapshot_url]
     parsed = urlparse(snapshot_url)
     if parsed.scheme != "https" or parsed.netloc != "raw.githubusercontent.com":
@@ -45,14 +45,12 @@ def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
 
 
 def channel_matches_target(*, channel_id: int, parent_id: int | None, target_id: int) -> bool:
-    # Thread 內回覆時，message.channel.id 會是 thread id；parent_id 才是原頻道 id
+    # thread 內回覆時要看 parent_id
     return channel_id == target_id or parent_id == target_id
 
 
 def merge_snapshots(snapshots: list[CodeSnapshot]) -> CodeSnapshot:
-    # 多來源合併規則：
-    # - 以第一次見到的順序保留輸出順序（方便人類閱讀）
-    # - 同碼若出現 active/expired 衝突，expired 覆蓋 active（避免誤公告）
+    # 合併：保留首次出現順序；衝突時 expired 壓 active
     if not snapshots:
         raise ValueError("Cannot merge an empty snapshot list.")
     if len(snapshots) == 1:
@@ -86,7 +84,7 @@ async def send_interaction_message(
     *,
     ephemeral: bool = True,
 ) -> None:
-    # slash command / modal 可能已 defer，這裡統一處理回覆方式
+    # 有些互動先 defer 了，這裡統一回覆
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=ephemeral)
     else:
@@ -100,7 +98,7 @@ class RedeemCommandTree(app_commands.CommandTree["RedeemCodeBot"]):
         error: app_commands.AppCommandError,
         /,
     ) -> None:
-        # 避免錯誤吞掉，至少回報到 console + ephemeral 提示
+        # 至少留 log，也回一個 ephemeral
         actual_error = getattr(error, "original", error)
         print(
             "App command error: "
@@ -129,7 +127,7 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
         self.bot = bot
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        # 手動補登：支援一次貼多筆，自動拆解與去重
+        # 手動補登：允許一次貼多筆
         codes = [
             RedeemCode(code=value, status=CodeStatus.ACTIVE, note="added from modal")
             for value in extract_codes_from_text(self.codes_input.value)
@@ -141,7 +139,7 @@ class AddCodeModal(discord.ui.Modal, title="新增兌換碼"):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        # 寫入 Storage：reconcile 會保證 code 正規化與只公告新 active
+        # reconcile 會自動正規化/去重
         result = await self.bot.storage.reconcile_codes(
             codes,
             source_url=f"discord://channel/{interaction.channel_id}",
@@ -192,7 +190,7 @@ class ControlPanelView(discord.ui.View):
         interaction: discord.Interaction,
         _: discord.ui.Button,
     ) -> None:
-        # 月報是 ephemeral：顯示「你尚未看過」的新碼，並在顯示後標記已讀
+        # 月報：只看你沒看過的
         await interaction.response.defer(ephemeral=True, thinking=True)
         report = await self.bot.build_monthly_report(interaction.user.id)
         await interaction.followup.send(report, ephemeral=True)
@@ -210,7 +208,7 @@ class ControlPanelView(discord.ui.View):
 
 class RedeemCodeBot(commands.Bot):
     def __init__(self, settings: Settings, storage: Storage) -> None:
-        # 需要 message_content 以便在指定頻道內自動擷取使用者貼上的兌換碼
+        # 需要 message_content 才能抓使用者貼碼
         intents = discord.Intents.default()
         intents.guilds = True
         intents.messages = True
@@ -223,12 +221,12 @@ class RedeemCodeBot(commands.Bot):
         )
         self.settings = settings
         self.storage = storage
-        # 主要來源：巴哈（支援 httpx -> playwright fallback）
+        # 主要來源：巴哈
         self.monitor = BahamutMonitor(
             forum_url=settings.forum_url,
             timeout_seconds=settings.request_timeout_seconds,
         )
-        # 額外來源：阿冷整理頁（可透過 ARLEN_CODES_URL 關閉）
+        # 額外來源：Arlen（可關）
         self.arlen_monitor = (
             ArlenCodesMonitor(
                 source_url=settings.arlen_codes_url,
@@ -242,7 +240,7 @@ class RedeemCodeBot(commands.Bot):
         self._resolved_channel_logged = False
 
     def build_panel_embed(self) -> discord.Embed:
-        # 面板以 Embed 呈現，避免純文字冗長，並搭配 persistent View 提供按鈕
+        # Embed + buttons
         embed = discord.Embed(
             title="兌換碼面板",
             description=(
@@ -271,7 +269,7 @@ class RedeemCodeBot(commands.Bot):
         return embed
 
     async def setup_hook(self) -> None:
-        # bot 啟動時：初始化資料庫、註冊 persistent view、啟動排程、同步 slash commands
+        # 啟動：DB + view + 排程 + 指令
         await self.storage.initialize()
         self.add_view(ControlPanelView(self))
         self.monitor_forum.change_interval(minutes=self.settings.monitor_interval_minutes)
@@ -310,7 +308,7 @@ class RedeemCodeBot(commands.Bot):
             )
 
     async def on_ready(self) -> None:
-        # 首次 ready 後做一次同步與面板補底
+        # 開機先跑一輪
         print(
             f"Logged in as {self.user} ({self.user.id if self.user else 'unknown'})",
             flush=True,
@@ -324,7 +322,7 @@ class RedeemCodeBot(commands.Bot):
                 print(f"Failed to post panel: {type(exc).__name__} {exc}", flush=True)
 
     async def _setup_buttons(self, interaction: discord.Interaction) -> None:
-        # /setup_buttons：把「目前頻道」設成新的面板頻道，並立刻重發置底面板
+        # /setup_buttons：把目前頻道當面板頻道
         print(
             f"/setup_buttons invoked by user={interaction.user.id} channel={interaction.channel_id}",
             flush=True,
@@ -344,7 +342,7 @@ class RedeemCodeBot(commands.Bot):
             )
 
     async def _sync_now(self, interaction: discord.Interaction, code: str | None = None) -> None:
-        # /sync_now：手動觸發一次抓取 + reconcile；可選填 code 做即時查核
+        # /sync_now：手動同步（可帶 code 查核）
         print(
             f"/sync_now invoked by user={interaction.user.id} channel={interaction.channel_id} code={code!r}",
             flush=True,
@@ -397,7 +395,7 @@ class RedeemCodeBot(commands.Bot):
             )
 
     async def on_message(self, message: discord.Message) -> None:
-        # 在面板頻道（或該頻道的討論串）內，自動擷取使用者貼上的兌換碼並收錄
+        # 面板頻道內自動收碼（含 thread）
         if message.author.bot:
             return
         listen_channel_id = await self.get_panel_channel_id()
@@ -412,7 +410,7 @@ class RedeemCodeBot(commands.Bot):
 
         codes = extract_codes_from_text(message.content)
         if codes:
-            # 來源記成 message：可追溯 jump_url，並與 monitor/manual 區分
+            # message 來源：用 jump_url 方便追溯
             result = await self.storage.reconcile_codes(
                 [
                     RedeemCode(code=code, status=CodeStatus.ACTIVE, note="captured from message")
@@ -439,7 +437,7 @@ class RedeemCodeBot(commands.Bot):
         await self.wait_until_ready()
 
     async def run_monitor_cycle(self, *, reason: str) -> None:
-        # 排程/啟動共用：抓取監控來源 -> reconcile -> 有新碼才公告
+        # 排程同步
         try:
             primary_snapshot, mode = await self.fetch_primary_monitor_snapshot()
             complete = True
@@ -480,7 +478,7 @@ class RedeemCodeBot(commands.Bot):
         *,
         title: str,
     ) -> None:
-        # 公告以 Embed 呈現，並在公告後重發面板，確保面板仍位於頻道最底
+        # 公告完就把面板推回底部
         channel = await self.resolve_channel(await self.get_panel_channel_id())
         if channel is None or not codes:
             return
@@ -495,7 +493,7 @@ class RedeemCodeBot(commands.Bot):
         await self.repost_panel(channel_id=channel.id)
 
     async def build_monthly_report(self, user_id: int) -> str:
-        # 月報：只顯示該 user 尚未看過、且仍為 active 的碼；顯示後會標記已讀
+        # 月報：只列未讀 active
         rows = await self.storage.get_unseen_monthly_rows(
             user_id,
             now=datetime.now(timezone.utc),
@@ -525,7 +523,7 @@ class RedeemCodeBot(commands.Bot):
         return "\n".join(lines)
 
     async def repost_panel(self, *, channel_id: int | None = None) -> None:
-        # 置底策略：刪舊面板、重發新面板（避免訊息被頂上去）
+        # 置底：刪舊再發
         async with self.panel_lock:
             target_channel_id = channel_id or await self.get_panel_channel_id()
             channel = await self.resolve_channel(target_channel_id)
@@ -555,7 +553,7 @@ class RedeemCodeBot(commands.Bot):
                     f"Posting panel to channel {channel.id}",
                     flush=True,
                 )
-                # View 每次重發都重新建立，確保按鈕可用且 custom_id 維持一致
+                # 每次重發都新建 view（避免按鈕失效）
                 panel_message = await channel.send(
                     embed=self.build_panel_embed(),
                     view=ControlPanelView(self),
@@ -571,7 +569,7 @@ class RedeemCodeBot(commands.Bot):
 
     @tasks.loop(minutes=5)
     async def ensure_panel(self) -> None:
-        # 補救機制：定期檢查面板是否存在且位於頻道最底，否則重發
+        # 定期補救：面板不見/不在底就重發
         channel_id = await self.get_panel_channel_id()
         channel = await self.resolve_channel(channel_id)
         if channel is None:
@@ -602,7 +600,7 @@ class RedeemCodeBot(commands.Bot):
             latest_message = message
             break
 
-        # 若面板不是最後一則訊息，就重發一次把面板推回底部
+        # 不是最後一則就推回底
         if latest_message is None or latest_message.id != int(current_id):
             await self.repost_panel(channel_id=channel.id)
 
@@ -611,7 +609,7 @@ class RedeemCodeBot(commands.Bot):
         await self.wait_until_ready()
 
     async def get_panel_channel_id(self) -> int:
-        # 若曾用 /setup_buttons 設定過，就以資料庫記錄的頻道為準
+        # /setup_buttons 設過就用 DB
         stored = await self.storage.get_state(PANEL_CHANNEL_STATE_KEY)
         if stored:
             try:
@@ -621,7 +619,7 @@ class RedeemCodeBot(commands.Bot):
         return self.settings.discord_channel_id
 
     async def resolve_channel(self, channel_id: int) -> discord.TextChannel | discord.Thread | None:
-        # 優先用快取；拿不到才 fetch（降低 API 成本）
+        # 先 cache，沒有再 fetch
         channel = self.get_channel(channel_id)
         if isinstance(channel, (discord.TextChannel, discord.Thread)):
             if not self._resolved_channel_logged:
@@ -675,7 +673,7 @@ class RedeemCodeBot(commands.Bot):
         return primary_snapshot, arlen_snapshot, mode, complete
 
     async def fetch_primary_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
-        # primary：有 snapshot 就用 snapshot，否則走 live bahamut
+        # 有 snapshot 就用 snapshot，否則 live bahamut
         if self.settings.remote_snapshot_url:
             try:
                 snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
@@ -776,7 +774,7 @@ class RedeemCodeBot(commands.Bot):
             )
 
     async def fetch_remote_snapshot(self, snapshot_url: str) -> CodeSnapshot:
-        # 遠端 snapshot（通常是 GitHub Actions 產生的 snapshot-cache）
+        # 遠端 snapshot（GitHub Actions）
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -792,7 +790,7 @@ class RedeemCodeBot(commands.Bot):
         ) as client:
             for candidate_url in build_snapshot_candidate_urls(snapshot_url):
                 try:
-                    # 逐一嘗試候選 URL（raw -> jsDelivr），成功即回傳
+                    # 逐個 URL 試（raw/jsDelivr）
                     response = await client.get(candidate_url, follow_redirects=True)
                     response.raise_for_status()
                     return snapshot_from_json(response.text)

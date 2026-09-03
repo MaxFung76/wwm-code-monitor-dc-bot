@@ -10,39 +10,39 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 from .models import CodeSnapshot, CodeStatus, RedeemCode
 
-# 兌換碼格式：避免把更長的字串/句子誤判為 code，因此限定長度並用邊界避免黏字
+# code token（避免黏字/誤判）
 CODE_PATTERN = re.compile(r"(?<![A-Za-z0-9])[A-Za-z0-9]{6,24}(?![A-Za-z0-9])")
-# 只要祖先節點命中以下標籤，即視為失效碼（巴哈常用 strike/del）
+# strike/del 視為失效
 EXPIRED_TAGS = {"strike", "s", "del"}
-# 巴哈不同頁型/文章內容根節點 selector（避免版型切換導致抓不到）
+# 版型 selector（巴哈常變）
 ARTICLE_SELECTORS = (
     ".c-article__content",
     ".c-post__body",
     "#article-content",
     "[itemprop='articleBody']",
 )
-# 維護頁/攔截頁的常見字樣，用於快速 fail-fast
+# 維護/攔截頁常見字樣
 MAINTENANCE_MARKERS = (
     "系統維修中",
     "維護中",
     "service unavailable",
 )
-# Playwright 重試次數：降低偶發維護頁或載入不完整的影響
+# browser 重試次數
 BROWSER_ATTEMPTS = 3
 
 
 def is_probable_code(token: str) -> bool:
-    # 避免把純數字（常見為 Discord message id）誤判為兌換碼
+    # 純數字多半不是兌換碼（常見是訊息 id）
     return any(ch.isalpha() for ch in token)
 
 
 def normalize_code(token: str) -> str:
-    # 全專案 invariant：儲存與比對前一律轉為大寫
+    # 全專案一律大寫
     return token.strip().upper()
 
 
 def extract_codes_from_text(text: str) -> list[str]:
-    # 從一段文字中抽取可能的兌換碼，並做去重與基本過濾
+    # 抽碼 + 去重
     tokens = CODE_PATTERN.findall(text.replace("\xa0", " "))
     seen: set[str] = set()
     codes: list[str] = []
@@ -57,7 +57,7 @@ def extract_codes_from_text(text: str) -> list[str]:
 
 
 def parse_bahamut_codes(html: str, source_url: str) -> CodeSnapshot:
-    # 解析巴哈文章：遍歷文章節點的文字內容，依祖先標籤判斷 active/expired
+    # 走訪文章文字節點，靠祖先 tag 判斷是否失效
     soup = BeautifulSoup(html, "html.parser")
     article_root = _find_article_root(soup)
 
@@ -73,7 +73,7 @@ def parse_bahamut_codes(html: str, source_url: str) -> CodeSnapshot:
         if not codes:
             continue
 
-        # 同一個 code 若同時出現有效/失效標記，失效優先（避免誤公告）
+        # 同碼衝突：失效優先
         status = CodeStatus.EXPIRED if _is_expired(node) else CodeStatus.ACTIVE
         for code in codes:
             existing = collected.get(code)
@@ -97,7 +97,7 @@ class BahamutMonitor:
         self.timeout_seconds = timeout_seconds
 
     async def fetch_snapshot(self) -> CodeSnapshot:
-        # 先用 httpx（成本較低），失敗再用 Playwright（成本較高但穩定）
+        # 先 httpx，失敗再 browser
         try:
             html = await self._fetch_html_with_httpx()
         except (httpx.HTTPStatusError, RuntimeError) as exc:
@@ -110,7 +110,7 @@ class BahamutMonitor:
         return parse_bahamut_codes(html, self.forum_url)
 
     def _build_headers(self) -> dict[str, str]:
-        # 用較像真實瀏覽器的 header，降低被擋/回傳簡化頁的機率
+        # header 盡量像瀏覽器
         return {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -124,7 +124,7 @@ class BahamutMonitor:
         }
 
     async def _fetch_html_with_httpx(self) -> str:
-        # httpx 路徑：快速抓取靜態 HTML
+        # httpx：快
         headers = self._build_headers()
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds,
@@ -137,7 +137,7 @@ class BahamutMonitor:
         return _ensure_article_html(response.text, source="httpx")
 
     async def _fetch_html_with_browser(self) -> str:
-        # Playwright 路徑：處理偶發維護頁、攔截頁或需要瀏覽器才能正常渲染的情況
+        # browser：抗攔截/中介頁
         try:
             from playwright.async_api import TimeoutError as PlaywrightTimeoutError
             from playwright.async_api import async_playwright
@@ -178,7 +178,7 @@ class BahamutMonitor:
                 )
                 last_error: Exception | None = None
                 for attempt in range(1, BROWSER_ATTEMPTS + 1):
-                    # 同一個 context 內重試：降低冷啟與反爬造成的變異
+                    # 同 context 內重試
                     page = await context.new_page()
                     try:
                         html = await self._fetch_browser_attempt(
@@ -217,7 +217,7 @@ class BahamutMonitor:
     ) -> str:
         from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-        # 先等 domcontentloaded，再給一點緩衝時間讓內容掛載
+        # 給一點時間讓內容掛上來
         await page.goto(
             self.forum_url,
             wait_until="domcontentloaded",
@@ -225,7 +225,7 @@ class BahamutMonitor:
         )
         await page.wait_for_timeout(1500)
 
-        # 巴哈偶爾會先回傳維護/中介頁：同一 attempt 內先檢查一次，必要時 reload 再判定失敗
+        # 偶爾先回維護/中介頁，先 reload 一次再判斷
         for phase in ("initial", "reload"):
             html = await page.content()
             try:
@@ -237,7 +237,7 @@ class BahamutMonitor:
                 if phase == "reload":
                     raise exc
                 try:
-                    # 若 selector 已掛載，代表內容可能已出現，再取一次 page content
+                    # selector 掛上來就再取一次
                     await page.locator(selector).first.wait_for(
                         state="attached",
                         timeout=min(timeout_ms, 4000),
@@ -248,7 +248,7 @@ class BahamutMonitor:
                         source=f"browser:selector:attempt={attempt}",
                     )
                 except (PlaywrightTimeoutError, RuntimeError):
-                    # selector 等不到就嘗試 reload，避免卡在維護頁或半載入狀態
+                    # 等不到就 reload
                     await page.reload(
                         wait_until="domcontentloaded",
                         timeout=timeout_ms,
@@ -257,7 +257,7 @@ class BahamutMonitor:
 
 
 def _find_article_root(soup: BeautifulSoup) -> Tag:
-    # 嘗試多個 selector，找到文章內容根節點
+    # 找文章根節點
     for selector in ARTICLE_SELECTORS:
         tag = soup.select_one(selector)
         if tag:
@@ -266,7 +266,7 @@ def _find_article_root(soup: BeautifulSoup) -> Tag:
 
 
 def _should_skip_text_node(node: NavigableString) -> bool:
-    # 避免 script/style 等雜訊，且忽略純空白文字
+    # 濾掉雜訊/空白
     parent = node.parent
     if parent is None:
         return True
@@ -276,12 +276,12 @@ def _should_skip_text_node(node: NavigableString) -> bool:
 
 
 def _is_expired(node: NavigableString) -> bool:
-    # 只要任一祖先是 strike/s/del，視為失效碼
+    # 祖先有 strike/del 就算失效
     return any(ancestor.name in EXPIRED_TAGS for ancestor in _iter_ancestors(node))
 
 
 def _iter_ancestors(node: NavigableString) -> Iterable[Tag]:
-    # 往上走到根，供失效判斷使用
+    # 往上走祖先
     parent = node.parent
     while isinstance(parent, Tag):
         yield parent
@@ -289,7 +289,7 @@ def _iter_ancestors(node: NavigableString) -> Iterable[Tag]:
 
 
 def _ensure_article_html(html: str, *, source: str) -> str:
-    # 用 title/body_text 先擋掉維護頁，再確認文章 selector 存在
+    # 先擋維護頁，再確認 selector 有出現
     soup = BeautifulSoup(html, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else ""
     title_lower = title.lower()

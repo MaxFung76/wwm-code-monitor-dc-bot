@@ -13,7 +13,7 @@ from .models import CodeStatus, ReconcileResult, RedeemCode
 
 @dataclass(slots=True)
 class MonthlyRow:
-    # 月報顯示用的扁平資料結構（避免 UI 端再做 dict 操作）
+    # 月報 row
     code: str
     status: str
     first_seen_at: str
@@ -22,11 +22,11 @@ class MonthlyRow:
 
 class Storage:
     def __init__(self, database_path: Path) -> None:
-        # 單機 SQLite：資料量不大時足夠，且方便 Docker volume 持久化
+        # SQLite（docker volume 友善）
         self.database_path = database_path
 
     async def initialize(self) -> None:
-        # 初始化在 background thread 執行，避免阻塞 discord event loop
+        # 放 thread，別卡 event loop
         await asyncio.to_thread(self._initialize)
 
     async def reconcile_codes(
@@ -38,7 +38,7 @@ class Storage:
         record_observations: bool = True,
         update_redeem_codes: bool = True,
     ) -> ReconcileResult:
-        # 將一批 codes 寫入資料庫並回傳差異（new_active_codes 用於公告）
+        # 寫入 + 回傳差異
         return await asyncio.to_thread(
             self._reconcile_codes,
             codes,
@@ -66,14 +66,14 @@ class Storage:
         return await asyncio.to_thread(self._get_status_map, codes)
 
     async def get_state(self, key: str) -> str | None:
-        # bot_state：存面板訊息 id / 面板頻道 id 等輕量狀態
+        # bot_state：輕量狀態
         return await asyncio.to_thread(self._get_state, key)
 
     async def set_state(self, key: str, value: str) -> None:
         await asyncio.to_thread(self._set_state, key, value)
 
     async def get_monthly_rows(self, now: datetime | None = None) -> list[MonthlyRow]:
-        # 月報（不含已讀判斷）：回傳本月首次出現的全部代碼
+        # 月報（不含已讀）
         return await asyncio.to_thread(self._get_monthly_rows, now)
 
     async def get_unseen_monthly_rows(
@@ -81,7 +81,7 @@ class Storage:
         user_id: int,
         now: datetime | None = None,
     ) -> list[MonthlyRow]:
-        # 月報（含已讀判斷）：只回傳 user 尚未看過、且仍為 active 的代碼
+        # 月報（含已讀）：只回未讀 active
         return await asyncio.to_thread(self._get_unseen_monthly_rows, user_id, now)
 
     async def mark_codes_seen(
@@ -90,15 +90,15 @@ class Storage:
         codes: list[str],
         seen_at: datetime | None = None,
     ) -> None:
-        # 標記使用者已讀：同碼若重新變成 active，會以 last_status_change_at 觸發重新顯示
+        # 標記已讀
         await asyncio.to_thread(self._mark_codes_seen, user_id, codes, seen_at)
 
     async def get_code_status(self, code: str) -> tuple[str, str] | None:
-        # 供 /sync_now 查核：查詢該 code 目前在 DB 的狀態與來源
+        # /sync_now 查核用
         return await asyncio.to_thread(self._get_code_status, code)
 
     def _initialize(self) -> None:
-        # schema 建立 + 啟動時資料修補（移除純數字碼、合併大小寫變體）
+        # schema + 啟動修補
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(

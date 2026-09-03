@@ -13,7 +13,7 @@ from .snapshot_io import snapshot_to_json
 
 
 def build_parser() -> argparse.ArgumentParser:
-    # 用於 GitHub Actions 產生 snapshot-cache（避免 VPS 直連巴哈被限流）
+    # GitHub Actions：產 snapshot-cache
     parser = argparse.ArgumentParser(description="Fetch codes and write a snapshot JSON file.")
     parser.add_argument("--url", required=True, help="Bahamut article URL.")
     parser.add_argument(
@@ -60,7 +60,7 @@ def merge_code_snapshots(snapshots: list[CodeSnapshot]) -> CodeSnapshot:
 
 
 async def run(url: str, arlen_url: str, output: Path, timeout: int) -> None:
-    # 以 BahamutMonitor 抓取並輸出成 snapshot JSON；若有設定 ARLEN_CODES_URL 則一併合併
+    # Bahamut + (optional) Arlen
     monitor = BahamutMonitor(forum_url=url, timeout_seconds=timeout)
     snapshots: list[CodeSnapshot] = [await monitor.fetch_snapshot()]
 
@@ -82,7 +82,6 @@ async def run(url: str, arlen_url: str, output: Path, timeout: int) -> None:
 
 
 def main() -> None:
-    # CLI 入口：同步執行一次抓取
     args = build_parser().parse_args()
     asyncio.run(run(args.url, args.arlen_url, Path(args.output), args.timeout))
 
