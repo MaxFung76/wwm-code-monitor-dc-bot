@@ -451,11 +451,12 @@ def test_fetch_monitor_snapshot_falls_back_to_live_when_remote_snapshot_fails() 
 
     import asyncio
 
-    snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+    primary_snapshot, arlen_snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
 
     assert mode == "live_bahamut"
     assert complete is True
-    assert snapshot == expected_snapshot
+    assert primary_snapshot == expected_snapshot
+    assert arlen_snapshot is None
 
 
 def test_fetch_monitor_snapshot_merges_arlen_source() -> None:
@@ -490,9 +491,10 @@ def test_fetch_monitor_snapshot_merges_arlen_source() -> None:
 
     import asyncio
 
-    snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
-
-    status_map = {item.code: item.status for item in snapshot.codes}
+    primary_snapshot, arlen_snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+    assert arlen_snapshot is not None
+    merged = merge_snapshots([primary_snapshot, arlen_snapshot])
+    status_map = {item.code: item.status for item in merged.codes}
     assert mode == "live_bahamut+arlen_codes"
     assert complete is True
     assert status_map["FINALTRUTH"] == CodeStatus.EXPIRED
@@ -522,11 +524,12 @@ def test_fetch_monitor_snapshot_is_partial_when_arlen_fails() -> None:
 
     import asyncio
 
-    snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+    primary_snapshot, arlen_snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
 
-    assert snapshot.source_url == "https://example.com/live"
+    assert primary_snapshot.source_url == "https://example.com/live"
     assert mode == "live_bahamut"
     assert complete is False
+    assert arlen_snapshot is None
 
 
 def test_storage_first_seen_active_codes_only_counts_initial_inserts(tmp_path: Path) -> None:
@@ -538,23 +541,29 @@ def test_storage_first_seen_active_codes_only_counts_initial_inserts(tmp_path: P
 
     first = asyncio.run(
         storage.reconcile_codes(
-            [RedeemCode(code="FLIPCODE1", status=CodeStatus.EXPIRED, note="expired first")],
+            [RedeemCode(code="FLIPCODE1", status=CodeStatus.ACTIVE, note="active first")],
             source_url="https://example.com",
             source_type="monitor",
         )
     )
-    assert first.first_seen_active_codes == []
+    assert [item.code for item in first.first_seen_active_codes] == ["FLIPCODE1"]
 
     second = asyncio.run(
         storage.reconcile_codes(
-            [RedeemCode(code="FLIPCODE1", status=CodeStatus.ACTIVE, note="active later")],
+            [RedeemCode(code="FLIPCODE1", status=CodeStatus.EXPIRED, note="expired later")],
             source_url="https://example.com",
             source_type="monitor",
         )
     )
-    assert second.new_active_codes == []
     assert second.first_seen_active_codes == []
 
-    status = asyncio.run(storage.get_code_status("FLIPCODE1"))
-    assert status is not None
-    assert status[0] == CodeStatus.EXPIRED.value
+    third = asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="FLIPCODE1", status=CodeStatus.ACTIVE, note="active again")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+    assert third.new_active_codes == []
+    assert third.first_seen_active_codes == []
+    assert asyncio.run(storage.get_code_status("FLIPCODE1")) == (CodeStatus.EXPIRED.value, "monitor")

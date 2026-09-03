@@ -35,6 +35,8 @@ class Storage:
         *,
         source_url: str,
         source_type: str,
+        record_observations: bool = True,
+        update_redeem_codes: bool = True,
     ) -> ReconcileResult:
         # 將一批 codes 寫入資料庫並回傳差異（new_active_codes 用於公告）
         return await asyncio.to_thread(
@@ -42,7 +44,26 @@ class Storage:
             codes,
             source_url,
             source_type,
+            record_observations,
+            update_redeem_codes,
         )
+
+    async def record_observations(
+        self,
+        codes: list[RedeemCode],
+        *,
+        source_url: str,
+        source_type: str,
+    ) -> None:
+        await asyncio.to_thread(
+            self._record_observations,
+            codes,
+            source_url,
+            source_type,
+        )
+
+    async def get_status_map(self, codes: list[str]) -> dict[str, CodeStatus]:
+        return await asyncio.to_thread(self._get_status_map, codes)
 
     async def get_state(self, key: str) -> str | None:
         # bot_state：存面板訊息 id / 面板頻道 id 等輕量狀態
@@ -125,6 +146,8 @@ class Storage:
         codes: list[RedeemCode],
         source_url: str,
         source_type: str,
+        record_observations: bool,
+        update_redeem_codes: bool,
     ) -> ReconcileResult:
         # reconcile 核心：
         # - 將輸入 codes 正規化去重（大寫）
@@ -146,26 +169,32 @@ class Storage:
 
         with self._connect() as conn:
             for item in deduped.values():
-                # redeem_codes：保留「目前狀態」；observations：保留「每次觀測」
-                row = conn.execute(
-                    """
-                    SELECT status
-                    FROM redeem_codes
-                    WHERE code = ?
-                    """,
-                    (item.code,),
-                ).fetchone()
+                row = None
+                if update_redeem_codes:
+                    row = conn.execute(
+                        """
+                        SELECT status
+                        FROM redeem_codes
+                        WHERE code = ?
+                        """,
+                        (item.code,),
+                    ).fetchone()
 
-                conn.execute(
-                    """
-                    INSERT INTO observations(code, status, source_url, source_type, note, observed_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (item.code, item.status.value, source_url, source_type, item.note, now),
-                )
+                if record_observations:
+                    conn.execute(
+                        """
+                        INSERT INTO observations(code, status, source_url, source_type, note, observed_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (item.code, item.status.value, source_url, source_type, item.note, now),
+                    )
+
+                if not update_redeem_codes:
+                    continue
 
                 if row is None:
-                    # 新碼：首次建立，active 會立即記錄 last_announced_at（避免重複公告）
+                    if item.status != CodeStatus.ACTIVE:
+                        continue
                     conn.execute(
                         """
                         INSERT INTO redeem_codes(
@@ -186,9 +215,8 @@ class Storage:
                         ),
                     )
                     changed_codes.append(item)
-                    if item.status == CodeStatus.ACTIVE:
-                        new_active_codes.append(item)
-                        first_seen_active_codes.append(item)
+                    new_active_codes.append(item)
+                    first_seen_active_codes.append(item)
                     continue
 
                 previous_status = CodeStatus(row["status"])
@@ -257,6 +285,46 @@ class Storage:
             first_seen_active_codes=first_seen_active_codes,
             changed_codes=changed_codes,
         )
+
+    def _record_observations(
+        self,
+        codes: list[RedeemCode],
+        source_url: str,
+        source_type: str,
+    ) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        deduped = {
+            normalize_code(item.code): RedeemCode(
+                code=normalize_code(item.code),
+                status=item.status,
+                note=item.note,
+            )
+            for item in codes
+            if is_probable_code(item.code)
+        }
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO observations(code, status, source_url, source_type, note, observed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (item.code, item.status.value, source_url, source_type, item.note, now)
+                    for item in deduped.values()
+                ],
+            )
+
+    def _get_status_map(self, codes: list[str]) -> dict[str, CodeStatus]:
+        normalized = [normalize_code(code) for code in codes if is_probable_code(code)]
+        if not normalized:
+            return {}
+        with self._connect() as conn:
+            placeholders = ",".join("?" for _ in normalized)
+            rows = conn.execute(
+                f"SELECT code, status FROM redeem_codes WHERE code IN ({placeholders})",
+                tuple(normalized),
+            ).fetchall()
+        return {str(row["code"]): CodeStatus(str(row["status"])) for row in rows}
 
     def _get_state(self, key: str) -> str | None:
         with self._connect() as conn:

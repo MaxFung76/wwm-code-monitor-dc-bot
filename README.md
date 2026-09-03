@@ -157,6 +157,9 @@ IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
 - `ARLEN_CODES_URL`
   - 額外兌換碼來源，預設為阿冷整理頁
   - 若不想使用此來源，可設為空字串
+- `ARLEN_EXPIRED_CONFIRMATIONS`
+  - Arlen 的失效碼需要連續確認次數（完整同步時才計數）
+  - 預設為 5
 - `REMOTE_SNAPSHOT_URL`
   - 若有設定，bot 會優先讀這份 JSON，不再由 VPS 直接抓巴哈
 - `DATABASE_PATH`

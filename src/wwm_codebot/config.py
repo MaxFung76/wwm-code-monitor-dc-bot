@@ -23,6 +23,8 @@ class Settings:
     remote_snapshot_url: str | None
     # SQLite 檔案路徑
     database_path: Path
+    # Arlen 的失效碼需要連續確認次數（完整同步時才計數）
+    arlen_expired_confirmations: int = 5
     # 監控排程頻率（分鐘）
     monitor_interval_minutes: int = 60
     # HTTP / Playwright 抓取 timeout
@@ -61,6 +63,7 @@ class Settings:
         )
         # 遠端 snapshot（有設會優先使用）
         remote_snapshot_url = os.getenv("REMOTE_SNAPSHOT_URL", "").strip() or None
+        arlen_expired_confirmations = int(os.getenv("ARLEN_EXPIRED_CONFIRMATIONS", "5"))
 
         # SQLite 路徑：容器內通常固定掛載在 /app/data
         database_path = Path(
@@ -74,6 +77,7 @@ class Settings:
             forum_url=forum_url,
             arlen_codes_url=arlen_codes_url,
             remote_snapshot_url=remote_snapshot_url,
+            arlen_expired_confirmations=arlen_expired_confirmations,
             database_path=database_path,
             monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "60")),
             request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
