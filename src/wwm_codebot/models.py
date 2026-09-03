@@ -27,8 +27,12 @@ class CodeSnapshot:
     codes: list[RedeemCode]
 
 
-# reconcile 後的差異：new_active_codes 用於公告；changed_codes 供除錯/追蹤
+# reconcile 後的差異：
+# - new_active_codes：所有需要公告的 active（包含 expired -> active 重新變回有效）
+# - first_seen_active_codes：真正「首次出現」的 active（避免 partial snapshot 時洗頻）
+# - changed_codes：供除錯/追蹤
 @dataclass(slots=True)
 class ReconcileResult:
     new_active_codes: list[RedeemCode]
+    first_seen_active_codes: list[RedeemCode]
     changed_codes: list[RedeemCode]

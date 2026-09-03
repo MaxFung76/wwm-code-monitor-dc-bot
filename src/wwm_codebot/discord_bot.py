@@ -447,9 +447,10 @@ class RedeemCodeBot(commands.Bot):
                 source_url=snapshot.source_url,
                 source_type="monitor",
             )
-            if result.new_active_codes and complete:
+            announced = result.new_active_codes if complete else result.first_seen_active_codes
+            if announced:
                 await self.announce_new_codes(
-                    result.new_active_codes,
+                    announced,
                     title="監控來源發現新兌換碼",
                 )
         except Exception as exc:

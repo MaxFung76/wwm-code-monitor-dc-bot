@@ -141,6 +141,7 @@ class Storage:
             if is_probable_code(item.code)
         }
         new_active_codes: list[RedeemCode] = []
+        first_seen_active_codes: list[RedeemCode] = []
         changed_codes: list[RedeemCode] = []
 
         with self._connect() as conn:
@@ -187,6 +188,7 @@ class Storage:
                     changed_codes.append(item)
                     if item.status == CodeStatus.ACTIVE:
                         new_active_codes.append(item)
+                        first_seen_active_codes.append(item)
                     continue
 
                 previous_status = CodeStatus(row["status"])
@@ -230,7 +232,11 @@ class Storage:
                 if item.status == CodeStatus.ACTIVE and previous_status != CodeStatus.ACTIVE:
                     new_active_codes.append(item)
 
-        return ReconcileResult(new_active_codes=new_active_codes, changed_codes=changed_codes)
+        return ReconcileResult(
+            new_active_codes=new_active_codes,
+            first_seen_active_codes=first_seen_active_codes,
+            changed_codes=changed_codes,
+        )
 
     def _get_state(self, key: str) -> str | None:
         with self._connect() as conn:

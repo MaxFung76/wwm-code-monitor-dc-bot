@@ -92,6 +92,7 @@ def test_storage_only_notifies_new_active_codes(tmp_path: Path) -> None:
         )
     )
     assert first.new_active_codes == []
+    assert first.first_seen_active_codes == []
 
     second = asyncio.run(
         storage.reconcile_codes(
@@ -112,6 +113,7 @@ def test_storage_only_notifies_new_active_codes(tmp_path: Path) -> None:
         )
     )
     assert [item.code for item in second.new_active_codes] == ["NEWCODE88"]
+    assert [item.code for item in second.first_seen_active_codes] == ["NEWCODE88"]
 
     third = asyncio.run(
         storage.reconcile_codes(
@@ -132,6 +134,7 @@ def test_storage_only_notifies_new_active_codes(tmp_path: Path) -> None:
         )
     )
     assert third.new_active_codes == []
+    assert third.first_seen_active_codes == []
 
 
 def test_ensure_article_html_rejects_maintenance_page() -> None:
@@ -500,3 +503,30 @@ def test_fetch_monitor_snapshot_is_partial_when_arlen_fails() -> None:
     assert snapshot.source_url == "https://example.com/live"
     assert mode == "live_bahamut"
     assert complete is False
+
+
+def test_storage_first_seen_active_codes_only_counts_initial_inserts(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "codes.db")
+
+    import asyncio
+
+    asyncio.run(storage.initialize())
+
+    first = asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="FLIPCODE1", status=CodeStatus.EXPIRED, note="expired first")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+    assert first.first_seen_active_codes == []
+
+    second = asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="FLIPCODE1", status=CodeStatus.ACTIVE, note="active later")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+    assert [item.code for item in second.new_active_codes] == ["FLIPCODE1"]
+    assert second.first_seen_active_codes == []
