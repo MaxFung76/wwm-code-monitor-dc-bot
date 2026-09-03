@@ -424,9 +424,10 @@ def test_fetch_monitor_snapshot_falls_back_to_live_when_remote_snapshot_fails() 
 
     import asyncio
 
-    snapshot, mode = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+    snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
 
     assert mode == "live_bahamut"
+    assert complete is True
     assert snapshot == expected_snapshot
 
 
@@ -462,9 +463,40 @@ def test_fetch_monitor_snapshot_merges_arlen_source() -> None:
 
     import asyncio
 
-    snapshot, mode = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+    snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
 
     status_map = {item.code: item.status for item in snapshot.codes}
     assert mode == "live_bahamut+arlen_codes"
+    assert complete is True
     assert status_map["FINALTRUTH"] == CodeStatus.EXPIRED
     assert status_map["TF37WR876K"] == CodeStatus.ACTIVE
+
+
+def test_fetch_monitor_snapshot_is_partial_when_arlen_fails() -> None:
+    bot = object.__new__(RedeemCodeBot)
+    live_snapshot = CodeSnapshot(
+        source_url="https://example.com/live",
+        observed_at=parse_bahamut_codes(
+            '<div class="c-article__content"><div>FINALTRUTH</div></div>',
+            "https://example.com/live",
+        ).observed_at,
+        codes=[RedeemCode(code="FINALTRUTH", status=CodeStatus.ACTIVE, note="live")],
+    )
+    bot.settings = SimpleNamespace(remote_snapshot_url=None)
+
+    async def fake_primary() -> tuple[CodeSnapshot, str]:
+        return live_snapshot, "live_bahamut"
+
+    async def fake_arlen_fail() -> CodeSnapshot:
+        raise RuntimeError("arlen down")
+
+    bot.fetch_primary_monitor_snapshot = fake_primary
+    bot.arlen_monitor = SimpleNamespace(fetch_snapshot=fake_arlen_fail)
+
+    import asyncio
+
+    snapshot, mode, complete = asyncio.run(RedeemCodeBot.fetch_monitor_snapshot(bot))
+
+    assert snapshot.source_url == "https://example.com/live"
+    assert mode == "live_bahamut"
+    assert complete is False

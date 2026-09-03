@@ -350,7 +350,7 @@ class RedeemCodeBot(commands.Bot):
         )
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            snapshot, mode = await self.fetch_monitor_snapshot()
+            snapshot, mode, complete = await self.fetch_monitor_snapshot()
             # 將快照寫入資料庫；Storage 會回傳本次新增的 active 碼清單
             result = await self.storage.reconcile_codes(
                 snapshot.codes,
@@ -364,6 +364,7 @@ class RedeemCodeBot(commands.Bot):
             lines = [
                 "已同步監控來源。",
                 f"- mode: {mode}",
+                f"- sources: {'complete' if complete else 'partial'}",
                 f"- active: {active_count}",
                 f"- expired: {expired_count}",
                 f"- new_active: {len(result.new_active_codes)}",
@@ -440,13 +441,13 @@ class RedeemCodeBot(commands.Bot):
     async def run_monitor_cycle(self, *, reason: str) -> None:
         # 排程/啟動共用：抓取監控來源 -> reconcile -> 有新碼才公告
         try:
-            snapshot, mode = await self.fetch_monitor_snapshot()
+            snapshot, mode, complete = await self.fetch_monitor_snapshot()
             result = await self.storage.reconcile_codes(
                 snapshot.codes,
                 source_url=snapshot.source_url,
                 source_type="monitor",
             )
-            if result.new_active_codes:
+            if result.new_active_codes and complete:
                 await self.announce_new_codes(
                     result.new_active_codes,
                     title="監控來源發現新兌換碼",
@@ -644,23 +645,28 @@ class RedeemCodeBot(commands.Bot):
         )
         return None
 
-    async def fetch_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
+    async def fetch_monitor_snapshot(self) -> tuple[CodeSnapshot, str, bool]:
         # 聚合來源：primary（REMOTE_SNAPSHOT_URL 或 live_bahamut）+ 可選 arlen_codes
         snapshots: list[CodeSnapshot] = []
         modes: list[str] = []
         errors: list[str] = []
+        primary_ok = False
 
         try:
             snapshot, mode = await self.fetch_primary_monitor_snapshot()
             snapshots.append(snapshot)
             modes.append(mode)
+            primary_ok = True
         except Exception as exc:
             errors.append(f"primary={type(exc).__name__} {exc}")
 
+        arlen_expected = getattr(self, "arlen_monitor", None) is not None
+        arlen_ok = False
         if getattr(self, "arlen_monitor", None) is not None:
             try:
                 snapshots.append(await self.arlen_monitor.fetch_snapshot())
                 modes.append("arlen_codes")
+                arlen_ok = True
             except Exception as exc:
                 print(
                     "Arlen source fetch failed, continuing with remaining monitors: "
@@ -672,7 +678,8 @@ class RedeemCodeBot(commands.Bot):
         if not snapshots:
             raise RuntimeError("All monitor sources failed: " + " | ".join(errors))
 
-        return merge_snapshots(snapshots), "+".join(modes)
+        complete = primary_ok and (not arlen_expected or arlen_ok)
+        return merge_snapshots(snapshots), "+".join(modes), complete
 
     async def fetch_primary_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
         # primary：有 snapshot 就用 snapshot，否則走 live bahamut
