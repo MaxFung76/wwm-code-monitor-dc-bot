@@ -193,6 +193,27 @@ class Storage:
 
                 previous_status = CodeStatus(row["status"])
                 has_changed = previous_status != item.status
+
+                if previous_status == CodeStatus.EXPIRED and item.status == CodeStatus.ACTIVE:
+                    conn.execute(
+                        """
+                        UPDATE redeem_codes
+                        SET source_url = ?,
+                            source_type = ?,
+                            note = ?,
+                            last_seen_at = ?
+                        WHERE code = ?
+                        """,
+                        (
+                            source_url,
+                            source_type,
+                            item.note,
+                            now,
+                            item.code,
+                        ),
+                    )
+                    continue
+
                 conn.execute(
                     """
                     UPDATE redeem_codes
@@ -228,7 +249,6 @@ class Storage:
 
                 if has_changed:
                     changed_codes.append(item)
-                # expired -> active 視為「新 active」，需要公告
                 if item.status == CodeStatus.ACTIVE and previous_status != CodeStatus.ACTIVE:
                     new_active_codes.append(item)
 

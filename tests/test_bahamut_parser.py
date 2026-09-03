@@ -266,7 +266,8 @@ def test_storage_hides_seen_monthly_codes_per_user(tmp_path: Path) -> None:
     )
 
     reactivated_rows = asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))
-    assert [row.code for row in reactivated_rows] == ["UNSEEN123"]
+    assert reactivated_rows == []
+    assert asyncio.run(storage.get_code_status("UNSEEN123")) == (CodeStatus.EXPIRED.value, "monitor")
 
 
 def test_storage_treats_codes_case_insensitively(tmp_path: Path) -> None:
@@ -528,5 +529,9 @@ def test_storage_first_seen_active_codes_only_counts_initial_inserts(tmp_path: P
             source_type="monitor",
         )
     )
-    assert [item.code for item in second.new_active_codes] == ["FLIPCODE1"]
+    assert second.new_active_codes == []
     assert second.first_seen_active_codes == []
+
+    status = asyncio.run(storage.get_code_status("FLIPCODE1"))
+    assert status is not None
+    assert status[0] == CodeStatus.EXPIRED.value
