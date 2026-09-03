@@ -14,6 +14,7 @@ concurrency:
 
 env:
   FORUM_URL: https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
+  ARLEN_CODES_URL: https://www.arlenfuture.com/games/where-winds-meet/codes/
   REQUEST_TIMEOUT_SECONDS: "20"
 
 jobs:
@@ -35,10 +36,11 @@ jobs:
           python -m pip install .
           python -m playwright install chromium
 
-      - name: Fetch Bahamut snapshot
+      - name: Fetch snapshot
         run: |
           python -m wwm_codebot.snapshot_cli \
             --url "${FORUM_URL}" \
+            --arlen-url "${ARLEN_CODES_URL}" \
             --output snapshot/bahamut_snapshot.json \
             --timeout "${REQUEST_TIMEOUT_SECONDS}"
 

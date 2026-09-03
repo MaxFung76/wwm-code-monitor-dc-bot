@@ -15,6 +15,7 @@ from wwm_codebot.discord_bot import (
     RedeemCodeBot,
 )
 from wwm_codebot.models import CodeSnapshot, CodeStatus, RedeemCode
+from wwm_codebot.snapshot_cli import merge_code_snapshots
 from wwm_codebot.snapshot_io import snapshot_from_json, snapshot_to_json
 from wwm_codebot.storage import Storage
 
@@ -399,6 +400,28 @@ def test_merge_snapshots_prefers_expired_status_from_later_source() -> None:
     assert merged.source_url == "https://example.com/bahamut | https://example.com/arlen"
     assert status_map["FINALTRUTH"] == CodeStatus.EXPIRED
     assert status_map["TF37WR876K"] == CodeStatus.ACTIVE
+
+
+def test_snapshot_cli_merge_code_snapshots_merges_sources() -> None:
+    bahamut_snapshot = CodeSnapshot(
+        source_url="https://example.com/bahamut",
+        observed_at=parse_bahamut_codes(
+            '<div class="c-article__content"><div>FINALTRUTH</div></div>',
+            "https://example.com/bahamut",
+        ).observed_at,
+        codes=[RedeemCode(code="FINALTRUTH", status=CodeStatus.ACTIVE, note="bahamut")],
+    )
+    arlen_snapshot = CodeSnapshot(
+        source_url="https://example.com/arlen",
+        observed_at=bahamut_snapshot.observed_at,
+        codes=[RedeemCode(code="FINALTRUTH", status=CodeStatus.EXPIRED, note="arlen expired")],
+    )
+
+    merged = merge_code_snapshots([bahamut_snapshot, arlen_snapshot])
+    status_map = {item.code: item.status for item in merged.codes}
+
+    assert merged.source_url == "https://example.com/bahamut | https://example.com/arlen"
+    assert status_map["FINALTRUTH"] == CodeStatus.EXPIRED
 
 
 def test_fetch_monitor_snapshot_falls_back_to_live_when_remote_snapshot_fails() -> None:
