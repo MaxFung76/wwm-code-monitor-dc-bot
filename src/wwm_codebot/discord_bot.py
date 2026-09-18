@@ -21,6 +21,7 @@ from .storage import Storage
 PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 ARLEN_EXPIRED_STREAK_PREFIX = "arlen_expired_streak:"
+MAX_COPY_BUTTONS = 25
 
 
 def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
@@ -78,13 +79,32 @@ def merge_snapshots(snapshots: list[CodeSnapshot]) -> CodeSnapshot:
     )
 
 
+class CopyCodeView(discord.ui.View):
+    def __init__(self, codes: list[str]) -> None:
+        super().__init__(timeout=3600)
+        for code in codes[:MAX_COPY_BUTTONS]:
+            self.add_item(_CopyCodeButton(code))
+
+
+class _CopyCodeButton(discord.ui.Button):
+    def __init__(self, code: str) -> None:
+        super().__init__(
+            label=code,
+            style=discord.ButtonStyle.secondary,
+        )
+        self.code = code
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await send_interaction_message(interaction, f"`{self.code}`", ephemeral=True)
+
+
+
 async def send_interaction_message(
     interaction: discord.Interaction,
     message: str,
     *,
     ephemeral: bool = True,
 ) -> None:
-    # 有些互動先 defer 了，這裡統一回覆
     if interaction.response.is_done():
         await interaction.followup.send(message, ephemeral=ephemeral)
     else:
@@ -192,8 +212,41 @@ class ControlPanelView(discord.ui.View):
     ) -> None:
         # 月報：只看你沒看過的
         await interaction.response.defer(ephemeral=True, thinking=True)
-        report = await self.bot.build_monthly_report(interaction.user.id)
-        await interaction.followup.send(report, ephemeral=True)
+        rows = await self.bot.storage.get_unseen_monthly_rows(
+            interaction.user.id,
+            now=datetime.now(timezone.utc),
+        )
+        if not rows:
+            await interaction.followup.send("目前沒有你尚未查看的新兌換碼。", ephemeral=True)
+            await self.bot.repost_panel()
+            return
+
+        codes = [row.code for row in rows]
+        shown_codes: list[str] = []
+        hidden_count = 0
+        limit = 1900
+        lines = []
+        for index, code in enumerate(codes):
+            line = f"`{code}`"
+            candidate = "\n".join([*lines, line])
+            if len(candidate) > limit:
+                hidden_count = len(codes) - index
+                break
+            lines.append(line)
+            shown_codes.append(code)
+
+        embed = discord.Embed(
+            title="新兌換碼",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        if hidden_count:
+            embed.set_footer(text=f"其餘 {hidden_count} 筆未顯示")
+
+        view = CopyCodeView(shown_codes) if shown_codes else None
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        if shown_codes:
+            await self.bot.storage.mark_codes_seen(interaction.user.id, shown_codes)
         await self.bot.repost_panel()
 
     async def on_error(
@@ -489,7 +542,8 @@ class RedeemCodeBot(commands.Bot):
             description=code_lines,
             color=discord.Color.green(),
         )
-        await channel.send(embed=embed)
+        view = CopyCodeView([item.code for item in codes])
+        await channel.send(embed=embed, view=view)
         await self.repost_panel(channel_id=channel.id)
 
     async def build_monthly_report(self, user_id: int) -> str:
