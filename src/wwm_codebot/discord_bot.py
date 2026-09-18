@@ -21,7 +21,7 @@ from .storage import Storage
 PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 ARLEN_EXPIRED_STREAK_PREFIX = "arlen_expired_streak:"
-PAGER_CODES_PER_PAGE = 20
+MAX_COPY_BUTTONS = 25
 
 
 def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
@@ -80,135 +80,29 @@ def merge_snapshots(snapshots: list[CodeSnapshot]) -> CodeSnapshot:
 
 
 class CopyCodeView(discord.ui.View):
-    def __init__(
-        self,
-        codes: list[str],
-        *,
-        title: str,
-        color: discord.Color,
-        ephemeral: bool,
-    ) -> None:
+    def __init__(self, codes: list[str]) -> None:
         super().__init__(timeout=3600)
-        self.codes = codes
-        self.title = title
-        self.color = color
-        self.page = 0
-        self.ephemeral = ephemeral
-        self._rebuild()
-
-    def _page_count(self) -> int:
-        if not self.codes:
-            return 1
-        return (len(self.codes) + PAGER_CODES_PER_PAGE - 1) // PAGER_CODES_PER_PAGE
-
-    def _page_slice(self) -> list[str]:
-        start = self.page * PAGER_CODES_PER_PAGE
-        end = start + PAGER_CODES_PER_PAGE
-        return self.codes[start:end]
-
-    def build_embed(self) -> discord.Embed:
-        total_pages = self._page_count()
-        lines = [f"`{code}`" for code in self._page_slice()]
-        embed = discord.Embed(
-            title=self.title,
-            description="\n".join(lines) if lines else "（空）",
-            color=self.color,
-        )
-        if total_pages > 1:
-            embed.set_footer(text=f"第 {self.page + 1}/{total_pages} 頁")
-        return embed
-
-    def _rebuild(self) -> None:
-        self.clear_items()
-
-        for index, code in enumerate(self._page_slice()):
-            self.add_item(_CopyCodeButton(code, row=index // 5))
-
-        total_pages = self._page_count()
-        if total_pages <= 1:
-            return
-
-        self.add_item(_PagerPrevButton(row=4))
-        self.add_item(_PagerIndicatorButton(f"{self.page + 1}/{total_pages}", row=4))
-        self.add_item(_PagerNextButton(row=4))
+        for code in codes[:MAX_COPY_BUTTONS]:
+            self.add_item(_CopyCodeButton(code))
 
 
 class _CopyCodeButton(discord.ui.Button):
-    def __init__(self, code: str, *, row: int) -> None:
+    def __init__(self, code: str) -> None:
         super().__init__(
             label=code,
             style=discord.ButtonStyle.secondary,
-            row=row,
         )
         self.code = code
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        view = self.view
-        ephemeral = True if not isinstance(view, CopyCodeView) else view.ephemeral
-        await send_interaction_message(interaction, f"`{self.code}`", ephemeral=ephemeral)
-
-
-class _PagerPrevButton(discord.ui.Button):
-    def __init__(self, *, row: int) -> None:
-        super().__init__(label="上一頁", style=discord.ButtonStyle.primary, row=row)
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        view = self.view
-        if not isinstance(view, CopyCodeView):
-            return
-        if view.page > 0:
-            view.page -= 1
-        view._rebuild()
-        await interaction.response.edit_message(embed=view.build_embed(), view=view)
-
-
-class _PagerNextButton(discord.ui.Button):
-    def __init__(self, *, row: int) -> None:
-        super().__init__(label="下一頁", style=discord.ButtonStyle.primary, row=row)
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        view = self.view
-        if not isinstance(view, CopyCodeView):
-            return
-        if view.page < view._page_count() - 1:
-            view.page += 1
-        view._rebuild()
-        await interaction.response.edit_message(embed=view.build_embed(), view=view)
-
-
-class _PagerIndicatorButton(discord.ui.Button):
-    def __init__(self, label: str, *, row: int) -> None:
-        super().__init__(label=label, style=discord.ButtonStyle.secondary, disabled=True, row=row)
-
-
-class OpenCopyPagerView(discord.ui.View):
-    def __init__(self, codes: list[str], *, title: str) -> None:
-        super().__init__(timeout=3600)
-        self.codes = codes
-        self.title = title
-
-    @discord.ui.button(label="複製", style=discord.ButtonStyle.secondary)
-    async def open_button(
-        self,
-        interaction: discord.Interaction,
-        _: discord.ui.Button,
-    ) -> None:
-        pager = CopyCodeView(
-            self.codes,
-            title=self.title,
-            color=discord.Color.blurple(),
-            ephemeral=True,
-        )
-        if interaction.response.is_done():
-            await interaction.followup.send(embed=pager.build_embed(), view=pager, ephemeral=True)
-        else:
-            await interaction.response.send_message(embed=pager.build_embed(), view=pager, ephemeral=True)
+        await send_interaction_message(interaction, f"`{self.code}`", ephemeral=True)
 
 
 
 async def send_interaction_message(
     interaction: discord.Interaction,
     message: str,
+    *,
     ephemeral: bool = True,
 ) -> None:
     if interaction.response.is_done():
@@ -328,14 +222,31 @@ class ControlPanelView(discord.ui.View):
             return
 
         codes = [row.code for row in rows]
-        view = CopyCodeView(
-            codes,
+        shown_codes: list[str] = []
+        hidden_count = 0
+        limit = 1900
+        lines = []
+        for index, code in enumerate(codes):
+            line = f"`{code}`"
+            candidate = "\n".join([*lines, line])
+            if len(candidate) > limit:
+                hidden_count = len(codes) - index
+                break
+            lines.append(line)
+            shown_codes.append(code)
+
+        embed = discord.Embed(
             title="新兌換碼",
+            description="\n".join(lines),
             color=discord.Color.blurple(),
-            ephemeral=True,
         )
-        await interaction.followup.send(embed=view.build_embed(), view=view, ephemeral=True)
-        await self.bot.storage.mark_codes_seen(interaction.user.id, codes)
+        if hidden_count:
+            embed.set_footer(text=f"其餘 {hidden_count} 筆未顯示")
+
+        view = CopyCodeView(shown_codes) if shown_codes else None
+        await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+        if shown_codes:
+            await self.bot.storage.mark_codes_seen(interaction.user.id, shown_codes)
         await self.bot.repost_panel()
 
     async def on_error(
@@ -631,7 +542,7 @@ class RedeemCodeBot(commands.Bot):
             description=code_lines,
             color=discord.Color.green(),
         )
-        view = OpenCopyPagerView([item.code for item in codes], title=title)
+        view = CopyCodeView([item.code for item in codes])
         await channel.send(embed=embed, view=view)
         await self.repost_panel(channel_id=channel.id)
 
