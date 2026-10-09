@@ -290,6 +290,13 @@ class RedeemCodeBot(commands.Bot):
                 callback=self._sync_now,
             )
         )
+        self.tree.add_command(
+            app_commands.Command(
+                name="unsee_code",
+                description="管理用：清除某個兌換碼的已讀狀態（預設自己，可指定 user）",
+                callback=self._unsee_code,
+            )
+        )
         if self.settings.discord_guild_id:
             guild = discord.Object(id=self.settings.discord_guild_id)
             self.tree.copy_global_to(guild=guild)
@@ -393,6 +400,35 @@ class RedeemCodeBot(commands.Bot):
                 f"同步失敗：{type(exc).__name__} {exc}",
                 ephemeral=True,
             )
+
+    async def _unsee_code(
+        self,
+        interaction: discord.Interaction,
+        code: str,
+        user: discord.User | None = None,
+    ) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+
+        actor = interaction.user
+        is_admin = False
+        if isinstance(actor, discord.Member):
+            perms = actor.guild_permissions
+            is_admin = bool(getattr(perms, "administrator", False) or getattr(perms, "manage_guild", False))
+        if not is_admin:
+            await interaction.followup.send("你沒有權限使用此指令。", ephemeral=True)
+            return
+
+        target_user = user or actor
+        codes = extract_codes_from_text(code)
+        if not codes:
+            await interaction.followup.send("沒有辨識到任何兌換碼。", ephemeral=True)
+            return
+
+        deleted = await self.storage.unmark_codes_seen(target_user.id, codes)
+        await interaction.followup.send(
+            f"已清除 {target_user.id} 的已讀狀態：{', '.join(codes)}（{deleted} 筆）",
+            ephemeral=True,
+        )
 
     async def on_message(self, message: discord.Message) -> None:
         # 面板頻道內自動收碼（含 thread）

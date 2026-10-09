@@ -93,6 +93,13 @@ class Storage:
         # 標記已讀
         await asyncio.to_thread(self._mark_codes_seen, user_id, codes, seen_at)
 
+    async def unmark_codes_seen(
+        self,
+        user_id: int,
+        codes: list[str],
+    ) -> int:
+        return await asyncio.to_thread(self._unmark_codes_seen, user_id, codes)
+
     async def get_code_status(self, code: str) -> tuple[str, str] | None:
         # /sync_now 查核用
         return await asyncio.to_thread(self._get_code_status, code)
@@ -411,6 +418,18 @@ class Storage:
                 """,
                 [(user_id, code, marked_at) for code in valid_codes],
             )
+
+    def _unmark_codes_seen(self, user_id: int, codes: list[str]) -> int:
+        valid_codes = [normalize_code(code) for code in codes if is_probable_code(code)]
+        if not valid_codes:
+            return 0
+        placeholders = ", ".join("?" for _ in valid_codes)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM user_code_views WHERE user_id = ? AND code IN ({placeholders})",
+                (user_id, *valid_codes),
+            )
+        return int(cursor.rowcount or 0)
 
     def _get_code_status(self, code: str) -> tuple[str, str] | None:
         # 對外查詢前先做基本過濾與正規化，避免把純數字/雜訊當成 code

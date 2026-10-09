@@ -271,6 +271,29 @@ def test_storage_hides_seen_monthly_codes_per_user(tmp_path: Path) -> None:
     assert asyncio.run(storage.get_code_status("UNSEEN123")) == (CodeStatus.EXPIRED.value, "monitor")
 
 
+def test_storage_unmark_seen_restores_monthly_visibility(tmp_path: Path) -> None:
+    storage = Storage(tmp_path / "codes.db")
+
+    import asyncio
+
+    asyncio.run(storage.initialize())
+    asyncio.run(
+        storage.reconcile_codes(
+            [RedeemCode(code="RESETSEEN1", status=CodeStatus.ACTIVE, note="active")],
+            source_url="https://example.com",
+            source_type="monitor",
+        )
+    )
+    asyncio.run(storage.mark_codes_seen(user_id=1001, codes=["RESETSEEN1"]))
+    assert asyncio.run(storage.get_unseen_monthly_rows(user_id=1001)) == []
+
+    deleted = asyncio.run(storage.unmark_codes_seen(user_id=1001, codes=["RESETSEEN1"]))
+    assert deleted == 1
+    assert [row.code for row in asyncio.run(storage.get_unseen_monthly_rows(user_id=1001))] == [
+        "RESETSEEN1"
+    ]
+
+
 def test_storage_treats_codes_case_insensitively(tmp_path: Path) -> None:
     storage = Storage(tmp_path / "codes.db")
 
