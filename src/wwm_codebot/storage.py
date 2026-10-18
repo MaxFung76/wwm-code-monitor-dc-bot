@@ -145,8 +145,20 @@ class Storage:
                 );
                 """
             )
-            self._delete_invalid_codes(conn)
-            self._normalize_existing_codes(conn)
+            key = "storage_migrations_version"
+            row = conn.execute("SELECT value FROM bot_state WHERE key = ?", (key,)).fetchone()
+            version = int(row["value"]) if row is not None else 0
+            if version < 1:
+                self._delete_invalid_codes(conn)
+                self._normalize_existing_codes(conn)
+                conn.execute(
+                    """
+                    INSERT INTO bot_state(key, value)
+                    VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (key, "1"),
+                )
 
     def _reconcile_codes(
         self,
@@ -456,103 +468,103 @@ class Storage:
         return conn
 
     def _delete_invalid_codes(self, conn: sqlite3.Connection) -> None:
-        # 清理純數字碼（常見為 Discord message id 或其他非兌換碼 token）
-        invalid_codes = [
-            str(row["code"])
-            for row in conn.execute("SELECT code FROM redeem_codes").fetchall()
-            if not is_probable_code(str(row["code"]))
-        ]
-        if not invalid_codes:
-            return
-
-        placeholders = ", ".join("?" for _ in invalid_codes)
-        conn.execute(
-            f"DELETE FROM redeem_codes WHERE code IN ({placeholders})",
-            invalid_codes,
-        )
-        conn.execute(
-            f"DELETE FROM observations WHERE code IN ({placeholders})",
-            invalid_codes,
-        )
-        conn.execute(
-            f"DELETE FROM user_code_views WHERE code IN ({placeholders})",
-            invalid_codes,
+        conn.executescript(
+            """
+            DELETE FROM redeem_codes WHERE code NOT GLOB '*[A-Za-z]*';
+            DELETE FROM observations WHERE code NOT GLOB '*[A-Za-z]*';
+            DELETE FROM user_code_views WHERE code NOT GLOB '*[A-Za-z]*';
+            """
         )
 
     def _normalize_existing_codes(self, conn: sqlite3.Connection) -> None:
-        # 歷史資料修補：把大小寫不同但同一組字元的 code 合併成同一筆（統一大寫）
-        redeem_rows = conn.execute("SELECT * FROM redeem_codes").fetchall()
-        merged_codes: dict[str, dict[str, str | None]] = {}
-        for row in redeem_rows:
-            normalized = normalize_code(str(row["code"]))
-            current = merged_codes.get(normalized)
-            candidate = dict(row)
-            candidate["code"] = normalized
-            if current is None:
-                merged_codes[normalized] = candidate
-                continue
-            merged_codes[normalized] = self._merge_redeem_rows(current, candidate)
-
-        conn.execute("DELETE FROM redeem_codes")
-        conn.executemany(
+        conn.executescript(
             """
-            INSERT INTO redeem_codes(
+            DROP TABLE IF EXISTS redeem_codes_new;
+            CREATE TABLE redeem_codes_new (
+                code TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                source_url TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                note TEXT,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                last_status_change_at TEXT NOT NULL,
+                last_announced_at TEXT
+            );
+
+            WITH normalized AS (
+                SELECT
+                    UPPER(TRIM(code)) AS norm_code,
+                    status,
+                    source_url,
+                    source_type,
+                    note,
+                    first_seen_at,
+                    last_seen_at,
+                    last_status_change_at,
+                    last_announced_at
+                FROM redeem_codes
+            ),
+            agg AS (
+                SELECT
+                    norm_code,
+                    MIN(first_seen_at) AS first_seen_at,
+                    MAX(last_seen_at) AS last_seen_at,
+                    MAX(last_status_change_at) AS last_status_change_at,
+                    MAX(last_announced_at) AS last_announced_at
+                FROM normalized
+                GROUP BY norm_code
+            ),
+            preferred AS (
+                SELECT norm_code, status, source_url, source_type, note
+                FROM (
+                    SELECT
+                        norm_code,
+                        status,
+                        source_url,
+                        source_type,
+                        note,
+                        ROW_NUMBER() OVER (PARTITION BY norm_code ORDER BY last_seen_at DESC) AS rn
+                    FROM normalized
+                )
+                WHERE rn = 1
+            )
+            INSERT INTO redeem_codes_new(
                 code, status, source_url, source_type, note,
                 first_seen_at, last_seen_at, last_status_change_at, last_announced_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    row["code"],
-                    row["status"],
-                    row["source_url"],
-                    row["source_type"],
-                    row["note"],
-                    row["first_seen_at"],
-                    row["last_seen_at"],
-                    row["last_status_change_at"],
-                    row["last_announced_at"],
-                )
-                for row in merged_codes.values()
-            ],
-        )
+            )
+            SELECT
+                agg.norm_code,
+                preferred.status,
+                preferred.source_url,
+                preferred.source_type,
+                preferred.note,
+                agg.first_seen_at,
+                agg.last_seen_at,
+                agg.last_status_change_at,
+                agg.last_announced_at
+            FROM agg
+            JOIN preferred USING (norm_code);
 
-        observation_rows = conn.execute("SELECT * FROM observations").fetchall()
-        conn.execute("DELETE FROM observations")
-        conn.executemany(
+            DROP TABLE redeem_codes;
+            ALTER TABLE redeem_codes_new RENAME TO redeem_codes;
+
+            UPDATE observations SET code = UPPER(TRIM(code));
+
+            DROP TABLE IF EXISTS user_code_views_new;
+            CREATE TABLE user_code_views_new (
+                user_id INTEGER NOT NULL,
+                code TEXT NOT NULL,
+                seen_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, code)
+            );
+            INSERT INTO user_code_views_new(user_id, code, seen_at)
+            SELECT user_id, UPPER(TRIM(code)) AS code, MAX(seen_at) AS seen_at
+            FROM user_code_views
+            GROUP BY user_id, UPPER(TRIM(code));
+            DROP TABLE user_code_views;
+            ALTER TABLE user_code_views_new RENAME TO user_code_views;
             """
-            INSERT INTO observations(code, status, source_url, source_type, note, observed_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    normalize_code(str(row["code"])),
-                    row["status"],
-                    row["source_url"],
-                    row["source_type"],
-                    row["note"],
-                    row["observed_at"],
-                )
-                for row in observation_rows
-            ],
-        )
-
-        view_rows = conn.execute("SELECT * FROM user_code_views").fetchall()
-        merged_views: dict[tuple[int, str], str] = {}
-        for row in view_rows:
-            key = (int(row["user_id"]), normalize_code(str(row["code"])))
-            seen_at = str(row["seen_at"])
-            existing = merged_views.get(key)
-            if existing is None or seen_at > existing:
-                merged_views[key] = seen_at
-
-        conn.execute("DELETE FROM user_code_views")
-        conn.executemany(
-            """
-            INSERT INTO user_code_views(user_id, code, seen_at)
-            VALUES (?, ?, ?)
-            """,
-            [(user_id, code, seen_at) for (user_id, code), seen_at in merged_views.items()],
         )
 
     def _merge_redeem_rows(
