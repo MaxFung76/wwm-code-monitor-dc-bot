@@ -573,16 +573,15 @@ class RedeemCodeBot(commands.Bot):
             current_id = await self.storage.get_state(PANEL_STATE_KEY)
             current_channel_id_raw = await self.storage.get_state(PANEL_CHANNEL_STATE_KEY)
             current_channel_id = int(current_channel_id_raw) if current_channel_id_raw else None
+            old_message = None
             if current_id:
                 with contextlib.suppress(discord.NotFound, discord.Forbidden, discord.HTTPException):
                     if current_channel_id and current_channel_id != channel.id:
                         old_channel = await self.resolve_channel(current_channel_id)
                         if old_channel is not None:
                             old_message = await old_channel.fetch_message(int(current_id))
-                            await old_message.delete()
                     else:
                         old_message = await channel.fetch_message(int(current_id))
-                    await old_message.delete()
 
             try:
                 print(
@@ -602,6 +601,12 @@ class RedeemCodeBot(commands.Bot):
                     f"Failed to send panel message: {type(exc).__name__} {exc}",
                     flush=True,
                 )
+                return
+
+            if old_message is not None:
+                with contextlib.suppress(discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    await asyncio.sleep(2)
+                    await old_message.delete()
 
     @tasks.loop(minutes=5)
     async def ensure_panel(self) -> None:
