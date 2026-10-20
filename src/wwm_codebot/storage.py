@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .bahamut import is_probable_code, normalize_code
+from .code_utils import is_probable_code, normalize_code
 from .models import CodeStatus, ReconcileResult, RedeemCode
 
 

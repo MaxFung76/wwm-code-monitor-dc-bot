@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from .bahamut import normalize_code
+from .code_utils import normalize_code
 from .models import CodeSnapshot, CodeStatus, RedeemCode
 
 

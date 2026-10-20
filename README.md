@@ -1,16 +1,14 @@
 # WWM Discord 兌換碼監控 Bot
 
-這個專案會定期監控巴哈姆特指定文章，抓取兌換碼並區分有效/過期狀態，然後同步到 Discord 頻道與 SQLite。
+這個專案會定期同步 `codes.yar.gg` 的社群兌換碼清單（含有效/過期），然後寫入 SQLite 並在 Discord 公告新有效碼。
 
 - 授權條款： [LICENSE](file:///d:/Trae/WWM-DC-BOT/LICENSE)
 - 安全通報： [SECURITY.md](file:///d:/Trae/WWM-DC-BOT/SECURITY.md)
 
-目前系統已同時支援兩種資料來源模式：
+目前資料來源：
 
-- `live_bahamut`：Bot 直接從 VPS 抓巴哈文章
-- `github_snapshot`：GitHub Actions 先抓巴哈並產出 snapshot，VPS Bot 再讀 snapshot
-
-如果你的 VPS 直連巴哈常遇到 `403 Forbidden`、`系統維修中`、或內容抓不到文章，建議正式環境以 `github_snapshot` 為主。
+- `codes_api`：Bot 直接呼叫 `codes.yar.gg` 的後端 API
+- `github_snapshot`：GitHub Actions 產出 snapshot，VPS Bot 再讀 `REMOTE_SNAPSHOT_URL`（可選）
 
 ## 系統架構
 
@@ -22,12 +20,11 @@
 - `SQLite`
   - 儲存目前每個兌換碼的最終狀態
   - 保留觀測紀錄與面板訊息狀態
-- `Bahamut Parser`
-  - 解析巴哈文章 HTML
-  - 以 `<strike>` / `<s>` / `<del>` 判定過期碼
+- `Codes API`
+  - 拉取有效/過期清單
 - `GitHub Actions Snapshot`
-  - 定期在 GitHub runner 抓巴哈文章
-  - 產生 `bahamut_snapshot.json`
+  - 定期在 GitHub runner 拉取 codes API
+  - 產生 `codes_snapshot.json`
   - 發佈到 `snapshot-cache` 分支供 VPS 讀取
 - `Watchtower`
   - 當 GHCR 有新版 image 時，自動拉下並重啟 bot
@@ -36,8 +33,8 @@
 
 ```text
 GitHub Actions
-  -> 抓巴哈文章
-  -> 產生 bahamut_snapshot.json
+  -> 拉取 codes API
+  -> 產生 codes_snapshot.json
   -> 發佈到 snapshot-cache 分支
 
 VPS Bot
@@ -49,7 +46,7 @@ VPS Bot
 ### 狀態來源優先順序
 
 - `monitor`
-  - 代表來自巴哈監控或 GitHub snapshot
+  - 代表來自 codes API 或 GitHub snapshot
   - 適合當成最終真實狀態來源
 - `message`
   - 代表使用者在頻道內貼出的碼
@@ -60,8 +57,7 @@ VPS Bot
 
 ## 已完成功能
 
-- 監控巴哈文章 `snA=388`
-- 辨識 `<strike>`、`<s>`、`<del>` 內的過期碼
+- 同步 `codes.yar.gg` 兌換碼清單（有效/過期）
 - 將結果寫入 SQLite，並只通知新出現的有效碼
 - Discord 面板按鈕：
   - `新增兌換碼`
@@ -80,7 +76,7 @@ VPS Bot
 
 1. push 專案到 GitHub
 2. 開啟 GHCR image build
-3. 開啟 `Publish Bahamut Snapshot`
+3. 開啟 `Publish Codes Snapshot`
 4. 在 VPS 設定 `.env`
 5. 啟動 `wwm-codebot` 與 `watchtower`
 6. 在 Discord 執行 `/setup_buttons`
@@ -90,14 +86,16 @@ VPS Bot
 
 ```text
 src/wwm_codebot/
-  bahamut.py       # 巴哈文章抓取與 HTML 解析
+  code_utils.py    # 抽碼/正規化
   config.py        # 環境變數設定
   discord_bot.py   # Discord Bot、按鈕面板、訊息監聽
+  healthcheck.py   # 容器 healthcheck
   main.py          # 啟動入口
   models.py        # 資料模型
   storage.py       # SQLite 狀態同步與查詢
+  yar.py           # codes.yar.gg API
 tests/
-  test_bahamut_parser.py
+  test_codes_source.py
 ```
 
 ## 安裝
@@ -116,8 +114,7 @@ pip install -e .[dev]
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
-FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
-ARLEN_CODES_URL=https://www.arlenfuture.com/games/where-winds-meet/codes/
+CODES_API_URL=https://codes-backend.wwmcodes.workers.dev/v1/codes
 REMOTE_SNAPSHOT_URL=
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=60
@@ -126,15 +123,14 @@ REQUEST_TIMEOUT_SECONDS=20
 
 ### 建議正式環境設定
 
-如果 VPS 抓巴哈不穩，`.env` 建議至少長這樣：
+如果你想完全用 snapshot（降低外部 API 依賴），`.env` 建議至少長這樣：
 
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_GUILD_ID=123456789012345678
-FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
-ARLEN_CODES_URL=https://www.arlenfuture.com/games/where-winds-meet/codes/
-REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+CODES_API_URL=https://codes-backend.wwmcodes.workers.dev/v1/codes
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
@@ -152,22 +148,16 @@ IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
 - `DISCORD_GUILD_ID`
   - 讓 slash command 同步到指定伺服器
   - 有設定時，`/setup_buttons` 與 `/sync_now` 會比較快出現
-- `FORUM_URL`
-  - 巴哈文章 URL
-- `ARLEN_CODES_URL`
-  - 額外兌換碼來源，預設為阿冷整理頁
-  - 若不想使用此來源，可設為空字串
-- `ARLEN_EXPIRED_CONFIRMATIONS`
-  - Arlen 的失效碼需要連續確認次數（完整同步時才計數）
-  - 預設為 5
+- `CODES_API_URL`
+  - `codes.yar.gg` 後端 API
 - `REMOTE_SNAPSHOT_URL`
-  - 若有設定，bot 會優先讀這份 JSON，不再由 VPS 直接抓巴哈
+  - 若有設定，bot 會優先讀這份 JSON，再 fallback 到 `CODES_API_URL`
 - `DATABASE_PATH`
   - SQLite 檔案位置
 - `MONITOR_INTERVAL_MINUTES`
   - Bot 自己執行同步的頻率
 - `REQUEST_TIMEOUT_SECONDS`
-  - HTTP / browser 抓取 timeout
+  - HTTP timeout
 - `HEARTBEAT_INTERVAL_SECONDS`
   - 心跳寫入頻率（用於 watchdog/healthcheck）
 - `WATCHDOG_TIMEOUT_SECONDS`
@@ -228,7 +218,7 @@ python -m wwm_codebot.main
 
 若同步成功，回覆通常會包含：
 
-- `mode: github_snapshot` 或 `mode: live_bahamut`
+- `mode: github_snapshot` 或 `mode: codes_api`
 - `snapshot[CODE]: active/expired/not found`
 - `db[CODE]: active/expired (source_type)`
 
@@ -278,8 +268,7 @@ cp .env.example .env
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
-FORUM_URL=https://forum.gamer.com.tw/C.php?bsn=75703&snA=388
-ARLEN_CODES_URL=https://www.arlenfuture.com/games/where-winds-meet/codes/
+CODES_API_URL=https://codes-backend.wwmcodes.workers.dev/v1/codes
 REMOTE_SNAPSHOT_URL=
 MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
@@ -289,13 +278,13 @@ IMAGE_NAME=wwm-codebot:local
 
 `docker-compose.yml` 會自動把資料庫路徑設成 `/app/data/redeem_codes.db`，並把主機上的 `./data` 掛進容器，所以 SQLite 會持久化保留。
 
-如果你的 VPS 直連巴哈容易遇到 `403` 或維護頁，建議改用 GitHub Actions 產生 snapshot，再讓 VPS 讀取：
+如果你想減少對外部 API 的依賴，建議改用 GitHub Actions 產生 snapshot，再讓 VPS 讀取：
 
 ```env
-REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 ```
 
-設了 `REMOTE_SNAPSHOT_URL` 後，bot 會優先讀這份 snapshot，不再由 VPS 直接抓巴哈文章；同步時仍可額外合併 `ARLEN_CODES_URL` 的內容。
+設了 `REMOTE_SNAPSHOT_URL` 後，bot 會優先讀這份 snapshot，再 fallback 到 `CODES_API_URL`。
 
 ### 4. 使用 `deploy.sh` 一鍵部署
 
@@ -420,14 +409,14 @@ docker compose logs -f watchtower
 
 或是把 GHCR package 設為 public（Packages → Package settings → Change visibility），就不需要登入。
 
-### 10. GitHub Actions 抓巴哈 Snapshot
+### 10. GitHub Actions 產生 Codes Snapshot
 
-已新增 workflow： [.github/workflows/bahamut-snapshot.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/bahamut-snapshot.yml)
+已新增 workflow： [.github/workflows/codes-snapshot.yml](file:///d:/Trae/WWM-DC-BOT/.github/workflows/codes-snapshot.yml)
 
 用途：
 
-- 每 60 分鐘在 GitHub runner 抓一次巴哈文章
-- 產生 `bahamut_snapshot.json`
+- 每 60 分鐘在 GitHub runner 拉取 codes API
+- 產生 `codes_snapshot.json`
 - 發佈到 `snapshot-cache` 分支
 
 #### 更新頻率說明
@@ -454,17 +443,17 @@ schedule:
 1. 到 GitHub repo：
    - `Settings > Actions > General > Workflow permissions`
    - 設成 `Read and write permissions`
-2. 手動執行一次 `Publish Bahamut Snapshot`
+2. 手動執行一次 `Publish Codes Snapshot`
 3. 成功後把 VPS `.env` 設成：
 
 ```env
-REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 ```
 
 以你目前 repo 為例：
 
 ```env
-REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/MaxFung76/wwm-code-monitor-dc-bot/snapshot-cache/bahamut_snapshot.json
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/MaxFung76/wwm-code-monitor-dc-bot/snapshot-cache/codes_snapshot.json
 ```
 
 4. 重啟 VPS bot：
@@ -480,13 +469,13 @@ docker compose restart wwm-codebot
 1. 確認 raw URL 可以打開：
 
 ```text
-https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 ```
 
 2. 確認 VPS `.env` 已設：
 
 ```env
-REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/bahamut_snapshot.json
+REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 ```
 
 3. 重啟 bot：
@@ -505,17 +494,17 @@ docker compose restart wwm-codebot
 
 - `mode: github_snapshot`
 
-就代表 VPS 已經不再直接抓巴哈。
+就代表 VPS 已經在讀 snapshot。
 
 ### 11. 常用指令
 
 - `/setup_buttons`：在目前頻道重新發送面板，並記住該頻道作為面板/監聽頻道
-- `/sync_now`：立刻同步巴哈文章並更新狀態（可選填特定 code 來檢查 status）
+- `/sync_now`：立刻同步並更新狀態（可選填特定 code 來檢查 status）
 
 ### 12. 部署注意事項
 
 - 這是 Discord Bot，不需要開放 HTTP port。
-- 請確認 VPS 出站網路可連到 `discord.com` 與 `forum.gamer.com.tw`。
+- 請確認 VPS 出站網路可連到 `discord.com` 與 `codes-backend.wwmcodes.workers.dev`。
 - 若你要自動重開機恢復，`restart: unless-stopped` 已經會自動拉起容器。
 - 若同時使用 `./deploy.sh` 與 `watchtower`，建議明確區分用途：
   - `./deploy.sh` 負責手動更新原始碼後重建或拉新版本
@@ -546,7 +535,7 @@ cat .env | grep REMOTE_SNAPSHOT_URL
 
 ### 判斷 snapshot 是否成功
 
-- `Publish Bahamut Snapshot` workflow 成功
+- `Publish Codes Snapshot` workflow 成功
 - raw URL 可正常開啟 JSON
 - `/sync_now` 顯示 `mode: github_snapshot`
 
@@ -557,7 +546,7 @@ cat .env | grep REMOTE_SNAPSHOT_URL
 3. 確認 `REMOTE_SNAPSHOT_URL` 是否存在
 4. 確認 GitHub snapshot raw URL 是否可打開
 5. 確認 GHCR image 是否有更新
-6. 最後才回頭檢查 Discord 權限或巴哈抓取
+6. 最後才回頭檢查 Discord 權限或 codes API 連線
 
 ### 13. 常見錯誤排除
 
@@ -638,20 +627,14 @@ docker compose up -d --remove-orphans
 docker compose restart wwm-codebot
 ```
 
-#### 巴哈在 VPS 上一直是 403 或系統維修中
+#### codes API 連線不穩 / 常失敗
 
-若 VPS 直連巴哈一直失敗，請不要再依賴 `live_bahamut`。
+建議改用 snapshot：
 
-改用：
-
-- GitHub Actions `Publish Bahamut Snapshot`
+- GitHub Actions `Publish Codes Snapshot`
 - VPS `.env` 設定 `REMOTE_SNAPSHOT_URL`
 
-只要 `/sync_now` 顯示：
-
-- `mode: github_snapshot`
-
-就代表已成功繞過 VPS 對巴哈的連線問題。
+只要 `/sync_now` 顯示 `mode: github_snapshot`，就代表 bot 正在讀 snapshot。
 
 ## 測試
 

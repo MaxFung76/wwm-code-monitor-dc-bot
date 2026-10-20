@@ -5,14 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wwm-codebot"
 version = "0.1.0"
-description = "Bahamut redeem code monitor and Discord bot for WWM."
+description = "WWM redeem code monitor and Discord bot."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "beautifulsoup4>=4.12.3",
   "discord.py>=2.5.2",
-  "httpx[http2]>=0.28.1",
-  "playwright>=1.53.0",
+  "httpx>=0.28.1",
   "python-dotenv>=1.1.1",
 ]
 

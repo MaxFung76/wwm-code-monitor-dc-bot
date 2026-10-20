@@ -1,1 +1,1 @@
-"""WWM Bahamut redeem code monitor and Discord bot."""
+"""WWM redeem code monitor and Discord bot."""

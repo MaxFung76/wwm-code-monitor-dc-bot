@@ -13,17 +13,16 @@ import httpx
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from .arlen import ArlenCodesMonitor
-from .bahamut import BahamutMonitor, extract_codes_from_text, normalize_code
+from .code_utils import extract_codes_from_text, normalize_code
 from .config import Settings
 from .models import CodeSnapshot, CodeStatus, RedeemCode
 from .snapshot_io import snapshot_from_json
 from .storage import Storage
+from .yar import YarCodesMonitor
 
 # bot_state keys（面板置底用）
 PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
-ARLEN_EXPIRED_STREAK_PREFIX = "arlen_expired_streak:"
 HEARTBEAT_STATE_KEY = "bot_heartbeat_at"
 
 
@@ -231,19 +230,9 @@ class RedeemCodeBot(commands.Bot):
         )
         self.settings = settings
         self.storage = storage
-        # 主要來源：巴哈
-        self.monitor = BahamutMonitor(
-            forum_url=settings.forum_url,
+        self.monitor = YarCodesMonitor(
+            api_url=settings.codes_api_url,
             timeout_seconds=settings.request_timeout_seconds,
-        )
-        # 額外來源：Arlen（可關）
-        self.arlen_monitor = (
-            ArlenCodesMonitor(
-                source_url=settings.arlen_codes_url,
-                timeout_seconds=settings.request_timeout_seconds,
-            )
-            if settings.arlen_codes_url
-            else None
         )
         self.panel_lock = asyncio.Lock()
         self._initial_sync_done = False
@@ -387,12 +376,8 @@ class RedeemCodeBot(commands.Bot):
         )
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            primary_snapshot, arlen_snapshot, mode, complete = await self.fetch_monitor_snapshot()
-            result, merged_snapshot = await self.apply_monitor_snapshots(
-                primary_snapshot=primary_snapshot,
-                arlen_snapshot=arlen_snapshot,
-                complete=complete,
-            )
+            snapshot, mode = await self.fetch_primary_monitor_snapshot()
+            result, merged_snapshot = await self.apply_monitor_snapshot(snapshot)
 
             active_count = sum(1 for item in merged_snapshot.codes if item.status == CodeStatus.ACTIVE)
             expired_count = sum(1 for item in merged_snapshot.codes if item.status == CodeStatus.EXPIRED)
@@ -400,7 +385,6 @@ class RedeemCodeBot(commands.Bot):
             lines = [
                 "已同步監控來源。",
                 f"- mode: {mode}",
-                f"- sources: {'complete' if complete else 'partial'}",
                 f"- active: {active_count}",
                 f"- expired: {expired_count}",
                 f"- new_active: {len(result.new_active_codes)}",
@@ -518,26 +502,8 @@ class RedeemCodeBot(commands.Bot):
     async def run_monitor_cycle(self, *, reason: str) -> None:
         # 排程同步
         try:
-            primary_snapshot, mode = await self.fetch_primary_monitor_snapshot()
-            complete = True
-            arlen_snapshot = None
-            if getattr(self, "arlen_monitor", None) is not None:
-                try:
-                    arlen_snapshot = await self.arlen_monitor.fetch_snapshot()
-                    mode = mode + "+arlen_codes"
-                except Exception as exc:
-                    print(
-                        "Arlen source fetch failed, continuing with Bahamut only: "
-                        f"{type(exc).__name__} {exc}",
-                        flush=True,
-                    )
-                    complete = False
-
-            result, _ = await self.apply_monitor_snapshots(
-                primary_snapshot=primary_snapshot,
-                arlen_snapshot=arlen_snapshot,
-                complete=complete,
-            )
+            snapshot, mode = await self.fetch_primary_monitor_snapshot()
+            result, _ = await self.apply_monitor_snapshot(snapshot)
             announced = result.first_seen_active_codes
             if announced:
                 await self.announce_new_codes(announced, title="監控來源發現新兌換碼")
@@ -739,123 +705,28 @@ class RedeemCodeBot(commands.Bot):
         )
         return None
 
-    async def fetch_monitor_snapshot(self) -> tuple[CodeSnapshot, CodeSnapshot | None, str, bool]:
-        primary_snapshot, mode = await self.fetch_primary_monitor_snapshot()
-        complete = True
-        arlen_snapshot = None
-        if getattr(self, "arlen_monitor", None) is not None:
-            try:
-                arlen_snapshot = await self.arlen_monitor.fetch_snapshot()
-                mode = mode + "+arlen_codes"
-            except Exception as exc:
-                print(
-                    "Arlen source fetch failed, continuing with Bahamut only: "
-                    f"{type(exc).__name__} {exc}",
-                    flush=True,
-                )
-                complete = False
-        return primary_snapshot, arlen_snapshot, mode, complete
-
     async def fetch_primary_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
-        # 有 snapshot 就用 snapshot，否則 live bahamut
+        # 有 snapshot 就用 snapshot，否則直抓 codes API
         if self.settings.remote_snapshot_url:
             try:
                 snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
                 return snapshot, "github_snapshot"
             except Exception as exc:
                 print(
-                    "Remote snapshot fetch failed, falling back to live Bahamut: "
+                    "Remote snapshot fetch failed, falling back to codes API: "
                     f"{type(exc).__name__} {exc}",
                     flush=True,
                 )
         snapshot = await self.monitor.fetch_snapshot()
-        return snapshot, "live_bahamut"
+        return snapshot, "codes_api"
 
-    def _arlen_streak_key(self, code: str) -> str:
-        return ARLEN_EXPIRED_STREAK_PREFIX + normalize_code(code)
-
-    async def apply_monitor_snapshots(
-        self,
-        *,
-        primary_snapshot: CodeSnapshot,
-        arlen_snapshot: CodeSnapshot | None,
-        complete: bool,
-    ):
-        primary_result = await self.storage.reconcile_codes(
-            primary_snapshot.codes,
-            source_url=primary_snapshot.source_url,
+    async def apply_monitor_snapshot(self, snapshot: CodeSnapshot):
+        result = await self.storage.reconcile_codes(
+            snapshot.codes,
+            source_url=snapshot.source_url,
             source_type="monitor",
         )
-
-        merged_snapshots = [primary_snapshot]
-        first_seen = list(primary_result.first_seen_active_codes)
-        changed = list(primary_result.changed_codes)
-
-        if arlen_snapshot is not None:
-            merged_snapshots.append(arlen_snapshot)
-            await self.storage.record_observations(
-                arlen_snapshot.codes,
-                source_url=arlen_snapshot.source_url,
-                source_type="monitor",
-            )
-            arlen_active = [item for item in arlen_snapshot.codes if item.status == CodeStatus.ACTIVE]
-            arlen_result = await self.storage.reconcile_codes(
-                arlen_active,
-                source_url=arlen_snapshot.source_url,
-                source_type="monitor",
-                record_observations=False,
-                update_redeem_codes=True,
-            )
-            first_seen.extend(arlen_result.first_seen_active_codes)
-            changed.extend(arlen_result.changed_codes)
-
-            if complete:
-                await self.apply_arlen_expired_confirmations(arlen_snapshot)
-
-        merged = merge_snapshots(merged_snapshots)
-        return (
-            type(primary_result)(
-                new_active_codes=first_seen,
-                first_seen_active_codes=first_seen,
-                changed_codes=changed,
-            ),
-            merged,
-        )
-
-    async def apply_arlen_expired_confirmations(self, arlen_snapshot: CodeSnapshot) -> None:
-        threshold = int(self.settings.arlen_expired_confirmations)
-        if threshold <= 0:
-            return
-
-        arlen_status: dict[str, CodeStatus] = {
-            normalize_code(item.code): item.status for item in arlen_snapshot.codes
-        }
-        status_map = await self.storage.get_status_map(list(arlen_status.keys()))
-
-        to_expire: list[RedeemCode] = []
-        for code, db_status in status_map.items():
-            if db_status != CodeStatus.ACTIVE:
-                continue
-            observed = arlen_status.get(code)
-            if observed == CodeStatus.EXPIRED:
-                key = self._arlen_streak_key(code)
-                raw = await self.storage.get_state(key)
-                streak = int(raw) if raw and raw.isdigit() else 0
-                streak += 1
-                await self.storage.set_state(key, str(streak))
-                if streak >= threshold:
-                    to_expire.append(RedeemCode(code=code, status=CodeStatus.EXPIRED, note="arlen confirmed"))
-            elif observed == CodeStatus.ACTIVE:
-                await self.storage.set_state(self._arlen_streak_key(code), "0")
-
-        if to_expire:
-            await self.storage.reconcile_codes(
-                to_expire,
-                source_url=arlen_snapshot.source_url,
-                source_type="monitor",
-                record_observations=False,
-                update_redeem_codes=True,
-            )
+        return result, snapshot
 
     async def fetch_remote_snapshot(self, snapshot_url: str) -> CodeSnapshot:
         # 遠端 snapshot（GitHub Actions）

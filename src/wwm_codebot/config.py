@@ -15,16 +15,12 @@ class Settings:
     discord_channel_id: int
     # 填了 guild 會快一點（sync 指令）
     discord_guild_id: int | None
-    # Bahamut URL
-    forum_url: str
-    # Arlen URL（空字串=關）
-    arlen_codes_url: str | None
+    # Codes API URL
+    codes_api_url: str
     # 遠端 snapshot（避免 VPS 直抓）
     remote_snapshot_url: str | None
     # SQLite path
     database_path: Path
-    # Arlen expired 連續確認次數（complete 同步才累積）
-    arlen_expired_confirmations: int = 5
     # 排程頻率（分鐘）
     monitor_interval_minutes: int = 60
     # 抓取 timeout
@@ -51,22 +47,12 @@ class Settings:
         guild_id_raw = os.getenv("DISCORD_GUILD_ID", "").strip()
         guild_id = int(guild_id_raw) if guild_id_raw else None
 
-        # Bahamut URL
-        forum_url = os.getenv(
-            "FORUM_URL",
-            "https://forum.gamer.com.tw/C.php?bsn=75703&snA=388",
+        codes_api_url = os.getenv(
+            "CODES_API_URL",
+            "https://codes-backend.wwmcodes.workers.dev/v1/codes",
         ).strip()
-        # Arlen URL（空字串=關）
-        arlen_codes_url = (
-            os.getenv(
-                "ARLEN_CODES_URL",
-                "https://www.arlenfuture.com/games/where-winds-meet/codes/",
-            ).strip()
-            or None
-        )
         # snapshot（有設就優先用）
         remote_snapshot_url = os.getenv("REMOTE_SNAPSHOT_URL", "").strip() or None
-        arlen_expired_confirmations = int(os.getenv("ARLEN_EXPIRED_CONFIRMATIONS", "5"))
 
         # SQLite path
         database_path = Path(
@@ -77,10 +63,8 @@ class Settings:
             discord_token=token,
             discord_channel_id=int(channel_id),
             discord_guild_id=guild_id,
-            forum_url=forum_url,
-            arlen_codes_url=arlen_codes_url,
+            codes_api_url=codes_api_url,
             remote_snapshot_url=remote_snapshot_url,
-            arlen_expired_confirmations=arlen_expired_confirmations,
             database_path=database_path,
             monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "60")),
             request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
