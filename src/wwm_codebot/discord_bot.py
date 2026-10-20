@@ -243,10 +243,7 @@ class RedeemCodeBot(commands.Bot):
         # Embed + buttons
         embed = discord.Embed(
             title="兌換碼面板",
-            description=(
-                "這裡會整理最新兌換碼。\n"
-                "你可以補登代碼、查看新碼，也可以直接在這裡貼上兌換碼。"
-            ),
+            description="集中管理兌換碼新增、查看與同步狀態。",
             color=discord.Color.blurple(),
         )
         embed.add_field(
@@ -258,14 +255,16 @@ class RedeemCodeBot(commands.Bot):
             inline=False,
         )
         embed.add_field(
-            name="自動處理",
-            value=(
-                "機器人會定期同步監控來源。\n"
-                "在這個頻道或討論串貼上兌換碼，也會自動幫你收錄。"
-            ),
+            name="自動同步",
+            value="機器人會定期同步監控來源，並更新兌換碼狀態。",
             inline=False,
         )
-        embed.set_footer(text="有新公告或互動時，面板會自動回到底部。")
+        embed.add_field(
+            name="自動收錄",
+            value="在此頻道或其討論串貼上兌換碼，機器人會自動收錄。",
+            inline=False,
+        )
+        embed.set_footer(text="面板會自動置底，保持在最新訊息區域。")
         return embed
 
     async def setup_hook(self) -> None:
