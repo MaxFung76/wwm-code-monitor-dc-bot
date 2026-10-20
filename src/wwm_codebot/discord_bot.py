@@ -78,6 +78,12 @@ def merge_snapshots(snapshots: list[CodeSnapshot]) -> CodeSnapshot:
     )
 
 
+def format_public_monitor_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"監控暫時失敗（HTTP {exc.response.status_code}），稍後自動重試。"
+    return "監控暫時失敗，稍後自動重試。"
+
+
 async def send_interaction_message(
     interaction: discord.Interaction,
     message: str,
@@ -500,7 +506,7 @@ class RedeemCodeBot(commands.Bot):
         except Exception as exc:
             channel = await self.resolve_channel(await self.get_panel_channel_id())
             if channel is not None:
-                await channel.send(f"監控執行失敗：`{type(exc).__name__}` {exc}")
+                await channel.send(format_public_monitor_error(exc))
             else:
                 print(
                     f"Monitor failed and channel not resolved: {type(exc).__name__} {exc}",
