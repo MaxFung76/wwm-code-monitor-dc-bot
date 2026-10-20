@@ -506,7 +506,7 @@ class RedeemCodeBot(commands.Bot):
         except Exception as exc:
             channel = await self.resolve_channel(await self.get_panel_channel_id())
             if channel is not None:
-                await channel.send(format_public_monitor_error(exc))
+                return
             else:
                 print(
                     f"Monitor failed and channel not resolved: {type(exc).__name__} {exc}",
