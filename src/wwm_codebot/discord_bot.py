@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
+import threading
+import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
@@ -21,6 +24,7 @@ from .storage import Storage
 PANEL_STATE_KEY = "panel_message_id"
 PANEL_CHANNEL_STATE_KEY = "panel_channel_id"
 ARLEN_EXPIRED_STREAK_PREFIX = "arlen_expired_streak:"
+HEARTBEAT_STATE_KEY = "bot_heartbeat_at"
 
 
 def build_snapshot_candidate_urls(snapshot_url: str) -> list[str]:
@@ -244,6 +248,9 @@ class RedeemCodeBot(commands.Bot):
         self.panel_lock = asyncio.Lock()
         self._initial_sync_done = False
         self._resolved_channel_logged = False
+        self._last_heartbeat_monotonic = time.monotonic()
+        self._watchdog_thread: threading.Thread | None = None
+        self._watchdog_stop = threading.Event()
 
     def build_panel_embed(self) -> discord.Embed:
         # Embed + buttons
@@ -281,6 +288,8 @@ class RedeemCodeBot(commands.Bot):
         self.monitor_forum.start()
         self.ensure_panel.change_interval(minutes=5)
         self.ensure_panel.start()
+        self.heartbeat.change_interval(seconds=self.settings.heartbeat_interval_seconds)
+        self.heartbeat.start()
         self.tree.add_command(
             app_commands.Command(
                 name="setup_buttons",
@@ -325,6 +334,7 @@ class RedeemCodeBot(commands.Bot):
             f"Logged in as {self.user} ({self.user.id if self.user else 'unknown'})",
             flush=True,
         )
+        self._start_watchdog()
         if not self._initial_sync_done:
             self._initial_sync_done = True
             await self.run_monitor_cycle(reason="startup")
@@ -332,6 +342,22 @@ class RedeemCodeBot(commands.Bot):
                 await self.repost_panel()
             except Exception as exc:
                 print(f"Failed to post panel: {type(exc).__name__} {exc}", flush=True)
+
+    def _start_watchdog(self) -> None:
+        if self._watchdog_thread is not None:
+            return
+
+        def runner() -> None:
+            timeout = int(self.settings.watchdog_timeout_seconds)
+            sleep_seconds = max(1, int(min(timeout / 3, 10)))
+            while not self._watchdog_stop.is_set():
+                if time.monotonic() - self._last_heartbeat_monotonic > timeout:
+                    print("Watchdog timeout: bot heartbeat stalled, exiting.", flush=True)
+                    os._exit(1)
+                time.sleep(sleep_seconds)
+
+        self._watchdog_thread = threading.Thread(target=runner, name="watchdog", daemon=True)
+        self._watchdog_thread.start()
 
     async def _setup_buttons(self, interaction: discord.Interaction) -> None:
         # /setup_buttons：把目前頻道當面板頻道
@@ -468,6 +494,18 @@ class RedeemCodeBot(commands.Bot):
 
         await self.repost_panel()
         await self.process_commands(message)
+
+    @tasks.loop(seconds=30)
+    async def heartbeat(self) -> None:
+        self._last_heartbeat_monotonic = time.monotonic()
+        await self.storage.set_state(
+            HEARTBEAT_STATE_KEY,
+            datetime.now(timezone.utc).isoformat(),
+        )
+
+    @heartbeat.before_loop
+    async def before_heartbeat(self) -> None:
+        await self.wait_until_ready()
 
     @tasks.loop(minutes=10)
     async def monitor_forum(self) -> None:

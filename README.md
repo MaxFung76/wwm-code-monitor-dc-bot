@@ -168,6 +168,12 @@ IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
   - Bot 自己執行同步的頻率
 - `REQUEST_TIMEOUT_SECONDS`
   - HTTP / browser 抓取 timeout
+- `HEARTBEAT_INTERVAL_SECONDS`
+  - 心跳寫入頻率（用於 watchdog/healthcheck）
+- `WATCHDOG_TIMEOUT_SECONDS`
+  - 心跳超時就強制退出，交給容器重啟
+- `HEALTHCHECK_MAX_STALE_SECONDS`
+  - healthcheck 容許的最大心跳延遲
 - `USE_REGISTRY_IMAGE`
   - `true` 表示 VPS 走 GHCR image 模式
 - `IMAGE_NAME`

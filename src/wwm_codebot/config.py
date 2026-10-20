@@ -29,6 +29,9 @@ class Settings:
     monitor_interval_minutes: int = 60
     # 抓取 timeout
     request_timeout_seconds: int = 20
+    heartbeat_interval_seconds: int = 30
+    watchdog_timeout_seconds: int = 180
+    healthcheck_max_stale_seconds: int = 120
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -81,4 +84,7 @@ class Settings:
             database_path=database_path,
             monitor_interval_minutes=int(os.getenv("MONITOR_INTERVAL_MINUTES", "60")),
             request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "20")),
+            heartbeat_interval_seconds=int(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "30")),
+            watchdog_timeout_seconds=int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "180")),
+            healthcheck_max_stale_seconds=int(os.getenv("HEALTHCHECK_MAX_STALE_SECONDS", "120")),
         )
