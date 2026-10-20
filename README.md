@@ -450,12 +450,6 @@ schedule:
 REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 ```
 
-以你目前 repo 為例：
-
-```env
-REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/MaxFung76/wwm-code-monitor-dc-bot/snapshot-cache/codes_snapshot.json
-```
-
 4. 重啟 VPS bot：
 
 ```bash
