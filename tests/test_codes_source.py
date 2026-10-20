@@ -386,7 +386,7 @@ def test_merge_snapshots_prefers_expired_status_from_later_source() -> None:
     assert status_map["TF37WR876K"] == CodeStatus.ACTIVE
 
 
-def test_fetch_primary_monitor_snapshot_falls_back_to_api_when_remote_snapshot_fails() -> None:
+def test_fetch_primary_monitor_snapshot_falls_back_to_snapshot_when_api_fails() -> None:
     bot = object.__new__(RedeemCodeBot)
     expected_snapshot = CodeSnapshot(
         source_url=DEFAULT_API_URL,
@@ -399,12 +399,12 @@ def test_fetch_primary_monitor_snapshot_falls_back_to_api_when_remote_snapshot_f
     )
 
     async def fake_fetch_remote_snapshot(_: str) -> CodeSnapshot:
-        request = httpx.Request("GET", "https://example.com/snapshot.json")
-        response = httpx.Response(429, request=request)
-        raise httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
+        return expected_snapshot
 
     async def fake_live_snapshot() -> CodeSnapshot:
-        return expected_snapshot
+        request = httpx.Request("GET", DEFAULT_API_URL)
+        response = httpx.Response(503, request=request)
+        raise httpx.HTTPStatusError("503 Service Unavailable", request=request, response=response)
 
     bot.fetch_remote_snapshot = fake_fetch_remote_snapshot
     bot.monitor = SimpleNamespace(fetch_snapshot=fake_live_snapshot)
@@ -413,6 +413,5 @@ def test_fetch_primary_monitor_snapshot_falls_back_to_api_when_remote_snapshot_f
 
     primary_snapshot, mode = asyncio.run(RedeemCodeBot.fetch_primary_monitor_snapshot(bot))
 
-    assert mode == "codes_api"
+    assert mode == "github_snapshot"
     assert primary_snapshot == expected_snapshot
-

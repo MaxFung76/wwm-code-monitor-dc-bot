@@ -284,7 +284,7 @@ IMAGE_NAME=wwm-codebot:local
 REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 ```
 
-設了 `REMOTE_SNAPSHOT_URL` 後，bot 會優先讀這份 snapshot，再 fallback 到 `CODES_API_URL`。
+預設 `codes_api` 為主；若 `CODES_API_URL` 連線失敗且有設定 `REMOTE_SNAPSHOT_URL`，才會 fallback 到 snapshot。
 
 ### 4. 使用 `deploy.sh` 一鍵部署
 

@@ -706,19 +706,22 @@ class RedeemCodeBot(commands.Bot):
         return None
 
     async def fetch_primary_monitor_snapshot(self) -> tuple[CodeSnapshot, str]:
-        # 有 snapshot 就用 snapshot，否則直抓 codes API
-        if self.settings.remote_snapshot_url:
-            try:
-                snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
-                return snapshot, "github_snapshot"
-            except Exception as exc:
-                print(
-                    "Remote snapshot fetch failed, falling back to codes API: "
-                    f"{type(exc).__name__} {exc}",
-                    flush=True,
-                )
-        snapshot = await self.monitor.fetch_snapshot()
-        return snapshot, "codes_api"
+        try:
+            snapshot = await self.monitor.fetch_snapshot()
+            return snapshot, "codes_api"
+        except Exception as exc:
+            api_error = exc
+            print(
+                "Codes API fetch failed, falling back to remote snapshot: "
+                f"{type(exc).__name__} {exc}",
+                flush=True,
+            )
+
+        if not self.settings.remote_snapshot_url:
+            raise api_error
+
+        snapshot = await self.fetch_remote_snapshot(self.settings.remote_snapshot_url)
+        return snapshot, "github_snapshot"
 
     async def apply_monitor_snapshot(self, snapshot: CodeSnapshot):
         result = await self.storage.reconcile_codes(
