@@ -324,13 +324,48 @@ def test_storage_initialize_merges_case_variant_codes(tmp_path: Path) -> None:
     import sqlite3
     from datetime import datetime, timedelta, timezone
 
-    asyncio.run(storage.initialize())
-
     start = datetime.now(timezone.utc)
     lower_seen = start.isoformat()
     upper_seen = (start + timedelta(minutes=5)).isoformat()
 
     conn = sqlite3.connect(storage.database_path)
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS redeem_codes (
+            code TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            note TEXT,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            last_status_change_at TEXT NOT NULL,
+            last_announced_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            status TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            note TEXT,
+            observed_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS bot_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS user_code_views (
+            user_id INTEGER NOT NULL,
+            code TEXT NOT NULL,
+            seen_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, code)
+        );
+        """
+    )
     conn.execute(
         """
         INSERT INTO redeem_codes(
