@@ -17,7 +17,7 @@ from wwm_codebot.discord_bot import (
 from wwm_codebot.models import CodeSnapshot, CodeStatus, RedeemCode
 from wwm_codebot.snapshot_io import snapshot_from_json, snapshot_to_json
 from wwm_codebot.storage import Storage
-from wwm_codebot.yar import DEFAULT_API_URL, parse_yar_codes
+from wwm_codebot.yar import DEFAULT_API_URL, LEGACY_API_URL, PROD_API_URL, parse_yar_codes, resolve_api_url
 
 
 def test_parse_yar_codes_marks_active_and_expired() -> None:
@@ -32,6 +32,13 @@ def test_parse_yar_codes_marks_active_and_expired() -> None:
     status_map = {item.code: item.status for item in snapshot.codes}
     assert status_map["ABC123XY"] == CodeStatus.EXPIRED
     assert status_map["EXPIRED77"] == CodeStatus.EXPIRED
+
+
+def test_resolve_api_url_upgrades_legacy_backend_url() -> None:
+    assert DEFAULT_API_URL == PROD_API_URL
+    assert resolve_api_url("") == PROD_API_URL
+    assert resolve_api_url(LEGACY_API_URL) == PROD_API_URL
+    assert resolve_api_url(PROD_API_URL) == PROD_API_URL
 
 
 def test_extract_codes_from_text_normalizes_and_dedupes() -> None:

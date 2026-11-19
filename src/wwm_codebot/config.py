@@ -49,7 +49,7 @@ class Settings:
 
         codes_api_url = os.getenv(
             "CODES_API_URL",
-            "https://codes-backend.wwmcodes.workers.dev/v1/codes",
+            "https://codes-backend-prod.wwmcodes.workers.dev/v1/codes",
         ).strip()
         # snapshot（有設就優先用）
         remote_snapshot_url = os.getenv("REMOTE_SNAPSHOT_URL", "").strip() or None

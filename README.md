@@ -114,7 +114,7 @@ pip install -e .[dev]
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
-CODES_API_URL=https://codes-backend.wwmcodes.workers.dev/v1/codes
+CODES_API_URL=https://codes-backend-prod.wwmcodes.workers.dev/v1/codes
 REMOTE_SNAPSHOT_URL=
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=60
@@ -129,7 +129,7 @@ REQUEST_TIMEOUT_SECONDS=20
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_GUILD_ID=123456789012345678
-CODES_API_URL=https://codes-backend.wwmcodes.workers.dev/v1/codes
+CODES_API_URL=https://codes-backend-prod.wwmcodes.workers.dev/v1/codes
 REMOTE_SNAPSHOT_URL=https://raw.githubusercontent.com/<owner>/<repo>/snapshot-cache/codes_snapshot.json
 DATABASE_PATH=data/redeem_codes.db
 MONITOR_INTERVAL_MINUTES=60
@@ -149,7 +149,7 @@ IMAGE_NAME=ghcr.io/<owner>/<repo>:latest
   - 讓 slash command 同步到指定伺服器
   - 有設定時，`/setup_buttons` 與 `/sync_now` 會比較快出現
 - `CODES_API_URL`
-  - `codes.yar.gg` 後端 API
+  - `codes.yar.gg` 後端 API（正式環境為 `codes-backend-prod.wwmcodes.workers.dev`）
 - `REMOTE_SNAPSHOT_URL`
   - 若有設定，bot 會優先讀這份 JSON，再 fallback 到 `CODES_API_URL`
 - `DATABASE_PATH`
@@ -268,7 +268,7 @@ cp .env.example .env
 ```env
 DISCORD_TOKEN=your-discord-bot-token
 DISCORD_CHANNEL_ID=123456789012345678
-CODES_API_URL=https://codes-backend.wwmcodes.workers.dev/v1/codes
+CODES_API_URL=https://codes-backend-prod.wwmcodes.workers.dev/v1/codes
 REMOTE_SNAPSHOT_URL=
 MONITOR_INTERVAL_MINUTES=60
 REQUEST_TIMEOUT_SECONDS=20
@@ -498,7 +498,7 @@ docker compose restart wwm-codebot
 ### 12. 部署注意事項
 
 - 這是 Discord Bot，不需要開放 HTTP port。
-- 請確認 VPS 出站網路可連到 `discord.com` 與 `codes-backend.wwmcodes.workers.dev`。
+- 請確認 VPS 出站網路可連到 `discord.com` 與 `codes-backend-prod.wwmcodes.workers.dev`。
 - 若你要自動重開機恢復，`restart: unless-stopped` 已經會自動拉起容器。
 - 若同時使用 `./deploy.sh` 與 `watchtower`，建議明確區分用途：
   - `./deploy.sh` 負責手動更新原始碼後重建或拉新版本

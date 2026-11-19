@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CODES_API_URL: https://codes-backend.wwmcodes.workers.dev/v1/codes
+  CODES_API_URL: https://codes-backend-prod.wwmcodes.workers.dev/v1/codes
   REQUEST_TIMEOUT_SECONDS: "20"
 
 jobs:
@@ -48,4 +48,3 @@ jobs:
           publish_dir: ./snapshot
           publish_branch: snapshot-cache
           force_orphan: true
-

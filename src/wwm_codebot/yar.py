@@ -9,7 +9,16 @@ from .code_utils import normalize_code
 from .models import CodeSnapshot, CodeStatus, RedeemCode
 
 
-DEFAULT_API_URL = "https://codes-backend.wwmcodes.workers.dev/v1/codes"
+LEGACY_API_URL = "https://codes-backend.wwmcodes.workers.dev/v1/codes"
+PROD_API_URL = "https://codes-backend-prod.wwmcodes.workers.dev/v1/codes"
+DEFAULT_API_URL = PROD_API_URL
+
+
+def resolve_api_url(api_url: str) -> str:
+    normalized = api_url.strip()
+    if not normalized or normalized == LEGACY_API_URL:
+        return PROD_API_URL
+    return normalized
 
 
 def parse_yar_codes(data: dict[str, Any], source_url: str) -> CodeSnapshot:
@@ -52,7 +61,7 @@ def parse_yar_codes(data: dict[str, Any], source_url: str) -> CodeSnapshot:
 
 class YarCodesMonitor:
     def __init__(self, api_url: str = DEFAULT_API_URL, timeout_seconds: int = 20) -> None:
-        self.api_url = api_url
+        self.api_url = resolve_api_url(api_url)
         self.timeout_seconds = timeout_seconds
 
     async def fetch_snapshot(self) -> CodeSnapshot:
@@ -71,4 +80,3 @@ class YarCodesMonitor:
         if not isinstance(payload, dict):
             raise RuntimeError("codes API returned a non-object payload.")
         return parse_yar_codes(payload, self.api_url)
-
